@@ -29,4 +29,4 @@ Known layouts use tuned parsers first. Generic results are marked for review unl
 
 ## Excel output
 
-The visible Transactions sheet contains Date, Description, Debit, Credit, Category and Calculated Balance. A hidden Extraction Data sheet preserves source values for annual merging.
+The visible Transactions sheet contains Date, Description, Amount, Category and Calculated Balance. Deposits are positive and withdrawals are negative. A hidden Extraction Data sheet preserves source values for validation and annual merging.

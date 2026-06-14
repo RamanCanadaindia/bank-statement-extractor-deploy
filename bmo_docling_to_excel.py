@@ -773,6 +773,23 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def to_signed_amount_view(df: pd.DataFrame, include_balance: bool = False) -> pd.DataFrame:
+    """Create the user-facing Hubdoc-style view: credits positive, debits negative."""
+    view = df.copy()
+    debit = pd.to_numeric(view["Debit"], errors="coerce").fillna(0)
+    credit = pd.to_numeric(view["Credit"], errors="coerce").fillna(0)
+    view["Amount"] = credit - debit
+    balance_rows = view["Category"].isin(["Opening Balance", "Closing Totals"])
+    view.loc[balance_rows, "Amount"] = pd.NA
+
+    columns = [column for column in ["Source File", "Date", "Description"] if column in view.columns]
+    columns.append("Amount")
+    if include_balance and "Balance" in view.columns:
+        columns.append("Balance")
+    columns.append("Category")
+    return view[columns]
+
+
 def merge_excel_files(input_paths: list[Path], output_path: Path) -> Path:
     """
     Merge monthly extractor workbooks into one annual workbook.
@@ -823,16 +840,25 @@ def merge_excel_files(input_paths: list[Path], output_path: Path) -> Path:
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-        annual_df.to_excel(writer, sheet_name="Annual Transactions", index=False)
-        summary_df.to_excel(writer, sheet_name="Annual Summary", index=False)
-        if not balances_df.empty:
-            balances_df.to_excel(writer, sheet_name="Monthly Balances", index=False)
+    annual_visible_df = to_signed_amount_view(annual_df, include_balance=True)
+    balances_visible_df = (
+        to_signed_amount_view(balances_df, include_balance=True) if not balances_df.empty else pd.DataFrame()
+    )
 
-        auto_adjust_columns(writer, "Annual Transactions", annual_df)
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        annual_visible_df.to_excel(writer, sheet_name="Annual Transactions", index=False)
+        summary_df.to_excel(writer, sheet_name="Annual Summary", index=False)
+        if not balances_visible_df.empty:
+            balances_visible_df.to_excel(writer, sheet_name="Monthly Balances", index=False)
+
+        auto_adjust_columns(writer, "Annual Transactions", annual_visible_df)
         auto_adjust_columns(writer, "Annual Summary", summary_df)
-        if not balances_df.empty:
-            auto_adjust_columns(writer, "Monthly Balances", balances_df)
+        if not balances_visible_df.empty:
+            auto_adjust_columns(writer, "Monthly Balances", balances_visible_df)
+
+        amount_col = annual_visible_df.columns.get_loc("Amount") + 1
+        for row_no in range(2, len(annual_visible_df) + 2):
+            writer.sheets["Annual Transactions"].cell(row_no, amount_col).number_format = '#,##0.00;[Red]-#,##0.00'
 
     return output_path
 
@@ -967,15 +993,13 @@ def add_balance_formulas(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFra
     calculated_col = worksheet.max_column + 1
     worksheet.cell(row=1, column=calculated_col, value="Calculated Balance")
 
-    visible_columns = ["Date", "Description", "Debit", "Credit", "Category"]
-    debit_col = visible_columns.index("Debit") + 1
-    credit_col = visible_columns.index("Credit") + 1
+    visible_columns = ["Date", "Description", "Amount", "Category"]
+    amount_col = visible_columns.index("Amount") + 1
 
     for index, row in df.reset_index(drop=True).iterrows():
         excel_row = index + 2
         category = str(row.get("Category", ""))
-        debit_ref = worksheet.cell(excel_row, debit_col).coordinate
-        credit_ref = worksheet.cell(excel_row, credit_col).coordinate
+        amount_ref = worksheet.cell(excel_row, amount_col).coordinate
         if category == "Opening Balance" or excel_row == 2:
             opening_balance = row.get("Balance")
             formula = 0 if pd.isna(opening_balance) else float(opening_balance)
@@ -984,10 +1008,7 @@ def add_balance_formulas(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFra
             formula = f"={previous_ref}"
         else:
             previous_ref = worksheet.cell(excel_row - 1, calculated_col).coordinate
-            formula = (
-                f'={previous_ref}-IF({debit_ref}="",0,{debit_ref})'
-                f'+IF({credit_ref}="",0,{credit_ref})'
-            )
+            formula = f'={previous_ref}+IF({amount_ref}="",0,{amount_ref})'
         worksheet.cell(excel_row, calculated_col, value=formula)
 
     for row_no in range(2, len(df) + 2):
@@ -1003,7 +1024,7 @@ def write_excel(df: pd.DataFrame, output_path: Path) -> Path:
 
     def write_to(path: Path) -> None:
         with pd.ExcelWriter(path, engine="openpyxl") as writer:
-            visible_df = df[["Date", "Description", "Debit", "Credit", "Category"]].copy()
+            visible_df = to_signed_amount_view(df)
             visible_df.to_excel(writer, sheet_name="Transactions", index=False)
             df.to_excel(writer, sheet_name="Extraction Data", index=False)
             summary_df.to_excel(writer, sheet_name="Summary", index=False)
@@ -1011,6 +1032,9 @@ def write_excel(df: pd.DataFrame, output_path: Path) -> Path:
             auto_adjust_columns(writer, "Extraction Data", df)
             auto_adjust_columns(writer, "Summary", summary_df)
             add_balance_formulas(writer, "Transactions", df)
+            amount_col = visible_df.columns.get_loc("Amount") + 1
+            for row_no in range(2, len(visible_df) + 2):
+                writer.sheets["Transactions"].cell(row_no, amount_col).number_format = '#,##0.00;[Red]-#,##0.00'
             writer.sheets["Extraction Data"].sheet_state = "hidden"
 
     try:

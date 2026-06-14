@@ -164,6 +164,7 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
     output_path = extractor.write_excel(df, work_dir / output_name)
     summary = extractor.build_summary(df)
     normal_df = df[~df["Category"].isin(["Opening Balance", "Closing Totals"])]
+    visible_transactions = extractor.to_signed_amount_view(normal_df)
 
     metrics = {row["Metric"]: row["Value"] for _, row in summary.iterrows()}
     reconciliation = reconciliation_status(df)
@@ -172,7 +173,7 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
         "source": uploaded_file.name,
         "output_name": output_path.name,
         "output_bytes": output_path.read_bytes(),
-        "transactions": normal_df,
+        "transactions": visible_transactions,
         "summary": summary,
         "metrics": metrics,
         "reconciliation": reconciliation,
