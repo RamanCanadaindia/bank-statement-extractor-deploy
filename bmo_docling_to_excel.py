@@ -1302,6 +1302,7 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
     previous_balance: float | None = None
     in_activity = False
     pending_description = ""
+    ambiguous_row_indexes: list[int] = []
 
     period_match = re.search(
         r"([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})\s+to\s+"
@@ -1390,6 +1391,17 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
             return False
         return any(marker in lower for marker in credit_markers)
 
+    def is_ambiguous(description: str) -> bool:
+        lower = description.lower()
+        return any(
+            marker in lower
+            for marker in (
+                "online banking transfer",
+                "account payable pmt",
+                "misc payment",
+            )
+        )
+
     def add_transaction(description: str, amount: float, balance: float | None) -> None:
         nonlocal previous_balance
         credit = abs(amount) if is_credit(description) else None
@@ -1414,6 +1426,8 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
                 categorize_transaction(description),
             )
         )
+        if is_ambiguous(description):
+            ambiguous_row_indexes.append(len(rows) - 1)
         if balance is not None:
             previous_balance = balance
         elif previous_balance is not None:
@@ -1426,6 +1440,60 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
                 + (0.0 if credit is None else credit),
                 2,
             )
+
+    def find_subset(indexes: list[int], target: float, side: str) -> list[int] | None:
+        """Find ambiguous rows whose signed amounts reconcile RBC statement totals."""
+        target_cents = round(target * 100)
+        if target_cents < 0:
+            return None
+        choices: dict[int, list[int]] = {0: []}
+        for row_index in indexes:
+            row = rows[row_index]
+            amount = row.debit if side == "debit" else row.credit
+            if amount is None:
+                continue
+            cents = round(abs(amount) * 100)
+            additions: dict[int, list[int]] = {}
+            for subtotal, selected in choices.items():
+                new_total = subtotal + cents
+                if new_total <= target_cents and new_total not in choices:
+                    additions[new_total] = selected + [row_index]
+            choices.update(additions)
+            if target_cents in choices:
+                return choices[target_cents]
+        return choices.get(target_cents)
+
+    def reconcile_ambiguous_sides(total_debits: float | None, total_credits: float | None) -> None:
+        """Use RBC's printed totals to correct rows whose descriptions are direction-neutral."""
+        nonlocal previous_balance
+        if total_debits is None or total_credits is None or not ambiguous_row_indexes:
+            return
+
+        current_debits = round(sum(row.debit or 0 for row in rows), 2)
+        current_credits = round(sum(row.credit or 0 for row in rows), 2)
+        debit_to_credit = round(current_debits - total_debits, 2)
+        missing_credit = round(total_credits - current_credits, 2)
+
+        selected: list[int] | None = None
+        flip_to_credit = False
+        if debit_to_credit > 0 and abs(debit_to_credit - missing_credit) <= 0.02:
+            selected = find_subset(ambiguous_row_indexes, debit_to_credit, "debit")
+            flip_to_credit = True
+        else:
+            credit_to_debit = round(current_credits - total_credits, 2)
+            missing_debit = round(total_debits - current_debits, 2)
+            if credit_to_debit > 0 and abs(credit_to_debit - missing_debit) <= 0.02:
+                selected = find_subset(ambiguous_row_indexes, credit_to_debit, "credit")
+
+        if not selected:
+            return
+        for row_index in selected:
+            row = rows[row_index]
+            amount = abs(row.debit or row.credit or 0)
+            if flip_to_credit:
+                row.debit, row.credit = None, amount
+            else:
+                row.debit, row.credit = amount, None
 
     for line in lines:
         if line.startswith("Account Activity Details"):
@@ -1484,6 +1552,7 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
         closing_balance = parse_amount(closing_match.group(4))
         total_debits = parse_amount(debit_total_match.group(1)) if debit_total_match else None
         total_credits = parse_amount(credit_total_match.group(1)) if credit_total_match else None
+        reconcile_ambiguous_sides(total_debits, total_credits)
         rows.append(
             ParsedLine(
                 closing_date,
