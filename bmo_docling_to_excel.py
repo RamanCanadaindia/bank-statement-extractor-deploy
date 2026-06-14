@@ -807,7 +807,7 @@ def merge_excel_files(input_paths: list[Path], output_path: Path) -> Path:
     frames: list[pd.DataFrame] = []
     balance_frames: list[pd.DataFrame] = []
 
-    for path in input_paths:
+    for source_order, path in enumerate(input_paths):
         if not path.exists():
             raise FileNotFoundError(f"Excel file not found: {path}")
 
@@ -819,6 +819,7 @@ def merge_excel_files(input_paths: list[Path], output_path: Path) -> Path:
             raise RuntimeError(f"{path.name} is missing columns: {', '.join(missing)}")
 
         df.insert(0, "Source File", path.name)
+        df["_source_order"] = source_order
         is_balance_row = df["Category"].isin(["Opening Balance", "Closing Totals"])
         balance_frames.append(df[is_balance_row].copy())
         frames.append(df[~is_balance_row].copy())
@@ -829,12 +830,15 @@ def merge_excel_files(input_paths: list[Path], output_path: Path) -> Path:
     annual_df = pd.concat(frames, ignore_index=True)
     balances_df = pd.concat(balance_frames, ignore_index=True) if balance_frames else pd.DataFrame()
 
-    # Sort when dates are ISO-like. If not, preserve input order.
+    # Keep every statement together, then sort transactions within that file.
     sortable_dates = pd.to_datetime(annual_df["Date"], errors="coerce")
     if sortable_dates.notna().any():
         annual_df = annual_df.assign(_sort_date=sortable_dates).sort_values(
-            ["_sort_date", "Source File"], na_position="last"
+            ["_source_order", "_sort_date"], na_position="last"
         ).drop(columns=["_sort_date"])
+    annual_df = annual_df.drop(columns=["_source_order"])
+    if not balances_df.empty:
+        balances_df = balances_df.sort_values("_source_order").drop(columns=["_source_order"])
 
     summary_df = pd.DataFrame(
         [
@@ -851,19 +855,31 @@ def merge_excel_files(input_paths: list[Path], output_path: Path) -> Path:
         to_signed_amount_view(balances_df, include_balance=True) if not balances_df.empty else pd.DataFrame()
     )
 
+    # Add a visually blank row between source statements in the annual sheet.
+    separated_rows: list[dict[str, Any]] = []
+    previous_source: str | None = None
+    blank_row = {column: None for column in annual_visible_df.columns}
+    for row in annual_visible_df.to_dict("records"):
+        source = str(row.get("Source File", ""))
+        if previous_source is not None and source != previous_source:
+            separated_rows.append(blank_row.copy())
+        separated_rows.append(row)
+        previous_source = source
+    annual_output_df = pd.DataFrame(separated_rows, columns=annual_visible_df.columns)
+
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-        annual_visible_df.to_excel(writer, sheet_name="Annual Transactions", index=False)
+        annual_output_df.to_excel(writer, sheet_name="Annual Transactions", index=False)
         summary_df.to_excel(writer, sheet_name="Annual Summary", index=False)
         if not balances_visible_df.empty:
             balances_visible_df.to_excel(writer, sheet_name="Monthly Balances", index=False)
 
-        auto_adjust_columns(writer, "Annual Transactions", annual_visible_df)
+        auto_adjust_columns(writer, "Annual Transactions", annual_output_df)
         auto_adjust_columns(writer, "Annual Summary", summary_df)
         if not balances_visible_df.empty:
             auto_adjust_columns(writer, "Monthly Balances", balances_visible_df)
 
-        amount_col = annual_visible_df.columns.get_loc("Amount") + 1
-        for row_no in range(2, len(annual_visible_df) + 2):
+        amount_col = annual_output_df.columns.get_loc("Amount") + 1
+        for row_no in range(2, len(annual_output_df) + 2):
             writer.sheets["Annual Transactions"].cell(row_no, amount_col).number_format = '#,##0.00;[Red]-#,##0.00'
 
     return output_path
