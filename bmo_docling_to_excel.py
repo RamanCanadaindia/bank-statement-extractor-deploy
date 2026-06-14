@@ -1408,6 +1408,7 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
         "item returned nsf",
         "account payable pmt stanchuck",
         "expired interac e-transfer credit",
+        "interac refund",
         "deposit",
     )
     debit_markers = (
@@ -1418,11 +1419,11 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
     )
 
     opening_match = re.search(
-        r"Opening balance on ([A-Z][a-z]+) (\d{1,2}),\s*(\d{4}) \$?([\d,]+\.\d{2})",
+        r"Opening balance on ([A-Z][a-z]+) (\d{1,2}),\s*(\d{4}) (-?\$?[\d,]+\.\d{2})",
         joined,
     )
     closing_match = re.search(
-        r"Closing balance on ([A-Z][a-z]+) (\d{1,2}),\s*(\d{4}) = \$?([\d,]+\.\d{2})",
+        r"Closing balance on ([A-Z][a-z]+) (\d{1,2}),\s*(\d{4}) = (-?\$?[\d,]+\.\d{2})",
         joined,
     )
     debit_total_match = re.search(r"Total cheques & debits \(\d+\) - ([\d,]+\.\d{2})", joined)
@@ -1594,8 +1595,14 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
         description = clean_text(f"{pending_description} {description}")
         pending_description = ""
 
-        amount = amounts[0]
-        balance = amounts[1] if len(amounts) >= 2 else None
+        if re.search(r"\bitem fee\s+\d+\s*@\s*\$", description, re.IGNORECASE) and len(amounts) >= 3:
+            # RBC prints fee count, unit rate, total charge and balance on one
+            # line (for example, "11 @ $45.00 495.00 -312.21").
+            amount = amounts[-2]
+            balance = amounts[-1]
+        else:
+            amount = amounts[0]
+            balance = amounts[1] if len(amounts) >= 2 else None
         add_transaction(description, amount, balance)
 
     if closing_match:
