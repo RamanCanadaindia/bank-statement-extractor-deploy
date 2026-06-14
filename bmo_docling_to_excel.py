@@ -1407,6 +1407,7 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
         "e-transfer - autodeposit",
         "item returned nsf",
         "account payable pmt stanchuck",
+        "expired interac e-transfer credit",
         "deposit",
     )
     debit_markers = (
@@ -1449,6 +1450,7 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
             marker in lower
             for marker in (
                 "online banking transfer",
+                "online banking foreign exchange",
                 "account payable pmt",
                 "misc payment",
             )
