@@ -320,12 +320,14 @@ with annual_tab:
 
 with guide_tab:
     st.subheader("Recommended file names")
+    st.caption("You may use any filename. This format makes monthly and annual files easier to sort.")
     st.code(
-        "2026-01_BMO_Chequing.pdf\n"
-        "2026-01_CIBC_Chequing.pdf\n"
-        "2026-01_RBC_Chequing.pdf\n"
-        "2026-01_TD_Chequing.pdf\n"
-        "2026-01_Tangerine_Chequing.pdf",
+        "2025-02_BMO_Chequing.pdf\n"
+        "2025-02_CIBC_Chequing.pdf\n"
+        "2025-02_RBC_Chequing.pdf\n"
+        "2025-02_RBC_Visa.pdf\n"
+        "2025-02_TD_Chequing.pdf\n"
+        "2025-02_Tangerine_Chequing.pdf",
         language="text",
     )
     st.subheader("Review checklist")
