@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: bank-statement-extractor
+    runtime: docker
+    plan: starter
+    healthCheckPath: /_stcore/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: APP_PASSWORD
+        sync: false

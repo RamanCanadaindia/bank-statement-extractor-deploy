@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib
+import hmac
 import io
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -41,7 +43,27 @@ st.markdown(
 )
 
 
-SUPPORTED_BANKS = ["Auto-detect", "BMO", "CIBC", "RBC", "Tangerine", "TD"]
+def require_password() -> None:
+    """Protect hosted deployments when APP_PASSWORD is configured."""
+    expected = os.environ.get("APP_PASSWORD", "")
+    if not expected or st.session_state.get("authenticated"):
+        return
+
+    st.title("Bank Statement Extractor")
+    password = st.text_input("Password", type="password")
+    if st.button("Sign in", type="primary"):
+        if hmac.compare_digest(password, expected):
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+    st.stop()
+
+
+require_password()
+
+
+SUPPORTED_BANKS = ["Auto-detect", "BMO", "CIBC", "RBC", "Tangerine", "TD", "Other bank"]
 
 
 def safe_name(value: str) -> str:
@@ -69,6 +91,39 @@ def docling_json_for_pdf(pdf_path: Path, work_dir: Path) -> Path:
     return json_path
 
 
+def reconciliation_status(df: pd.DataFrame) -> dict:
+    """Check whether extracted transaction arithmetic reaches the closing balance."""
+    opening = df.loc[df["Category"] == "Opening Balance", "Balance"].dropna()
+    closing = df.loc[df["Category"] == "Closing Totals", "Balance"].dropna()
+    normal = df[~df["Category"].isin(["Opening Balance", "Closing Totals"])]
+
+    if opening.empty or closing.empty:
+        return {
+            "status": "review",
+            "message": "Opening or closing balance was not found. Compare the Excel totals with the statement.",
+        }
+
+    calculated = round(
+        float(opening.iloc[0])
+        - float(pd.to_numeric(normal["Debit"], errors="coerce").fillna(0).sum())
+        + float(pd.to_numeric(normal["Credit"], errors="coerce").fillna(0).sum()),
+        2,
+    )
+    expected = round(float(closing.iloc[-1]), 2)
+    if abs(calculated - expected) <= 0.02:
+        return {
+            "status": "reconciled",
+            "message": f"Reconciled to the statement closing balance (${expected:,.2f}).",
+        }
+    return {
+        "status": "review",
+        "message": (
+            f"Needs review: calculated closing balance is ${calculated:,.2f}, "
+            f"but the statement shows ${expected:,.2f}."
+        ),
+    }
+
+
 def process_statement(uploaded_file, selected_bank: str) -> dict:
     work_dir = Path(tempfile.mkdtemp(prefix="bank-extractor-"))
     input_path = work_dir / safe_name(uploaded_file.name)
@@ -76,15 +131,26 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
 
     bank = extractor.detect_bank_from_file(input_path) if selected_bank == "Auto-detect" else selected_bank
     if bank == "Unknown":
-        raise RuntimeError("Could not detect the bank. Choose it manually and try again.")
-    if bank == "TD":
-        raise RuntimeError("TD detection is available, but its transaction layout still needs a sample to be tuned.")
+        bank = "Other bank"
 
-    effective_path = input_path
-    if bank == "BMO" and input_path.suffix.lower() == ".pdf":
-        effective_path = docling_json_for_pdf(input_path, work_dir)
+    rows = []
+    direct_error = None
+    if input_path.suffix.lower() == ".pdf" and bank not in {"BMO", "TD", "Other bank"}:
+        try:
+            rows = extractor.extract_from_statement_file(input_path, bank)
+        except RuntimeError as exc:
+            direct_error = exc
 
-    rows = extractor.extract_from_statement_file(effective_path, bank)
+    if not rows:
+        effective_path = input_path
+        if input_path.suffix.lower() == ".pdf":
+            effective_path = docling_json_for_pdf(input_path, work_dir)
+        try:
+            rows = extractor.extract_from_statement_file(effective_path, bank)
+        except Exception as exc:
+            if direct_error is not None:
+                raise RuntimeError(f"Direct extraction failed: {direct_error}. Docling fallback failed: {exc}") from exc
+            raise
     if not rows:
         raise RuntimeError(f"No transactions were found for {bank}.")
 
@@ -95,6 +161,7 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
     normal_df = df[~df["Category"].isin(["Opening Balance", "Closing Totals"])]
 
     metrics = {row["Metric"]: row["Value"] for _, row in summary.iterrows()}
+    reconciliation = reconciliation_status(df)
     return {
         "bank": bank,
         "source": uploaded_file.name,
@@ -103,6 +170,7 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
         "transactions": normal_df,
         "summary": summary,
         "metrics": metrics,
+        "reconciliation": reconciliation,
     }
 
 
@@ -147,7 +215,7 @@ with extract_tab:
             help="Upload one statement or several monthly statements.",
         )
         process_clicked = st.button("Extract transactions", type="primary", use_container_width=True)
-        st.caption("Supported: BMO, CIBC, RBC and Tangerine. TD requires a sample statement.")
+        st.caption("Tuned: BMO, CIBC, RBC and Tangerine. TD and other banks use the Docling fallback.")
 
     with right:
         st.subheader("Processing status")
@@ -183,13 +251,18 @@ with extract_tab:
                     )
 
                 for result in successes:
-                    with st.expander(f"{result['source']} · {result['bank']}", expanded=len(successes) == 1):
+                    with st.expander(f"{result['source']} - {result['bank']}", expanded=len(successes) == 1):
                         metrics = result["metrics"]
                         cols = st.columns(4)
                         cols[0].metric("Transactions", int(metrics.get("Number of transactions", 0)))
                         cols[1].metric("Debits", f"${metrics.get('Total Debits', 0):,.2f}")
                         cols[2].metric("Credits", f"${metrics.get('Total Credits', 0):,.2f}")
                         cols[3].metric("Closing balance", f"${metrics.get('Closing Balance', 0):,.2f}")
+                        reconciliation = result["reconciliation"]
+                        if reconciliation["status"] == "reconciled":
+                            st.success(reconciliation["message"])
+                        else:
+                            st.warning(reconciliation["message"])
                         st.download_button(
                             "Download Excel",
                             data=result["output_bytes"],
@@ -238,6 +311,7 @@ with guide_tab:
         "2026-01_BMO_Chequing.pdf\n"
         "2026-01_CIBC_Chequing.pdf\n"
         "2026-01_RBC_Chequing.pdf\n"
+        "2026-01_TD_Chequing.pdf\n"
         "2026-01_Tangerine_Chequing.pdf",
         language="text",
     )

@@ -1,6 +1,6 @@
 # Bank Statement Extractor Website
 
-A Streamlit website for converting BMO, CIBC, RBC and Tangerine statements into Excel and merging monthly workbooks into an annual file.
+A Streamlit website for converting Canadian bank statements into Excel and merging monthly workbooks into an annual file.
 
 ## Run locally
 
@@ -11,7 +11,9 @@ python -m streamlit run app.py
 
 ## Deploy
 
-Push this folder to a private GitHub repository, then deploy `app.py` with Streamlit Community Cloud or another Python host.
+Deploy the included Dockerfile on a persistent container host. Docling is too large for ordinary serverless functions such as Vercel Functions.
+
+Set the host environment variable `APP_PASSWORD` to protect the website before processing financial documents.
 
 For real bank statements, review the host's privacy, storage, access-control and data-retention policies. Streamlit Community Cloud is useful for testing, but a private authenticated host is more appropriate for client financial documents.
 
@@ -21,9 +23,10 @@ For real bank statements, review the host's privacy, storage, access-control and
 - CIBC PDF
 - RBC PDF
 - Tangerine PDF
-- TD detection only; a sample is still required to tune extraction
+- TD and unfamiliar banks through a generic Docling table/OCR fallback
+
+Known layouts use tuned parsers first. Generic results are marked for review unless opening and closing balances reconcile.
 
 ## Excel output
 
 The visible Transactions sheet contains Date, Description, Debit, Credit, Category and Calculated Balance. A hidden Extraction Data sheet preserves source values for annual merging.
-
