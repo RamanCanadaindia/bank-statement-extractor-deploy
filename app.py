@@ -173,6 +173,15 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
 
     metrics = {row["Metric"]: row["Value"] for _, row in summary.iterrows()}
     reconciliation = reconciliation_status(df)
+    is_rbc_chequing = bank == "RBC" and not df["Description"].astype(str).str.contains(
+        "Previous Statement Balance", case=False, regex=False
+    ).any()
+    if is_rbc_chequing and reconciliation["status"] != "reconciled":
+        raise RuntimeError(
+            "RBC safety check failed. The extracted transactions do not match the "
+            "statement totals and closing balance, so no Excel file was produced. "
+            "This statement needs review before it can be exported."
+        )
     return {
         "bank": bank,
         "source": uploaded_file.name,

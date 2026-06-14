@@ -28,6 +28,11 @@ try:
 except ImportError:  # PDF support is optional; JSON extraction still works.
     PdfReader = None
 
+try:
+    import pdfplumber
+except ImportError:  # Coordinate validation is enabled by the website requirements.
+    pdfplumber = None
+
 
 APP_FOLDER = Path(__file__).resolve().parent
 INPUT_JSON = APP_FOLDER / "text.json"
@@ -1600,6 +1605,11 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
             # line (for example, "11 @ $45.00 495.00 -312.21").
             amount = amounts[-2]
             balance = amounts[-1]
+        elif "overdraft interest" in description.lower() and len(amounts) >= 3:
+            # The first number is the interest rate, followed by the charged
+            # amount and balance (for example, "RBP+05.00%P.A 0.41 -968.50").
+            amount = amounts[-2]
+            balance = amounts[-1]
         else:
             amount = amounts[0]
             balance = amounts[1] if len(amounts) >= 2 else None
@@ -1788,6 +1798,81 @@ def extract_rbc_credit_card_transactions(pdf_text: str) -> list[ParsedLine]:
     return dedupe_transactions(rows)
 
 
+def apply_rbc_coordinate_sides(path: Path, rows: list[ParsedLine]) -> bool:
+    """Set RBC chequing debit/credit sides from the PDF's printed columns.
+
+    Returns True only when every normal transaction aligns, in order and amount,
+    with a value physically printed under RBC's debit or credit heading. If the
+    layout cannot be verified, rows are left unchanged for later reconciliation.
+    """
+    if pdfplumber is None:
+        return False
+
+    money_re = re.compile(r"^-?\$?\d{1,3}(?:,\d{3})*\.\d{2}$")
+    observations: list[tuple[float, str]] = []
+    try:
+        with pdfplumber.open(path) as document:
+            for page in document.pages:
+                words = page.extract_words(x_tolerance=2, y_tolerance=3)
+                debit_headers = [word for word in words if "Cheques&Debits" in word["text"]]
+                credit_headers = [word for word in words if "Deposits&Credits" in word["text"]]
+                balance_headers = [word for word in words if "Balance($)" in word["text"]]
+                if not debit_headers or not credit_headers or not balance_headers:
+                    continue
+
+                table_top = max(
+                    max(word["bottom"] for word in debit_headers),
+                    max(word["bottom"] for word in credit_headers),
+                    max(word["bottom"] for word in balance_headers),
+                )
+                debit_center = sum(
+                    (word["x0"] + word["x1"]) / 2 for word in debit_headers
+                ) / len(debit_headers)
+                credit_center = sum(
+                    (word["x0"] + word["x1"]) / 2 for word in credit_headers
+                ) / len(credit_headers)
+                balance_center = sum(
+                    (word["x0"] + word["x1"]) / 2 for word in balance_headers
+                ) / len(balance_headers)
+                debit_credit_boundary = (debit_center + credit_center) / 2
+                credit_balance_boundary = (credit_center + balance_center) / 2
+
+                for word in words:
+                    text = word["text"]
+                    if word["top"] <= table_top or not money_re.match(text):
+                        continue
+                    center = (word["x0"] + word["x1"]) / 2
+                    side = None
+                    if center < debit_credit_boundary and center > debit_center - 65:
+                        side = "debit"
+                    elif debit_credit_boundary <= center < credit_balance_boundary:
+                        side = "credit"
+                    if side:
+                        amount = parse_amount(text)
+                        if amount is not None:
+                            observations.append((abs(amount), side))
+    except Exception:
+        return False
+
+    transactions = [
+        row for row in rows if row.category not in {"Opening Balance", "Closing Totals"}
+    ]
+    if len(observations) != len(transactions):
+        return False
+    if any(
+        abs(observed_amount - abs(row.debit or row.credit or 0)) > 0.011
+        for row, (observed_amount, _) in zip(transactions, observations)
+    ):
+        return False
+
+    for row, (amount, side) in zip(transactions, observations):
+        if side == "credit":
+            row.debit, row.credit = None, amount
+        else:
+            row.debit, row.credit = amount, None
+    return True
+
+
 def extract_from_statement_file(path: Path, bank_name: str = "BMO") -> list[ParsedLine]:
     """Read JSON or PDF input and dispatch to the best available extractor."""
     suffix = path.suffix.lower()
@@ -1813,6 +1898,7 @@ def extract_from_statement_file(path: Path, bank_name: str = "BMO") -> list[Pars
                 return rows
             rows = extract_rbc_pdf_transactions(pdf_text)
             if rows:
+                apply_rbc_coordinate_sides(path, rows)
                 return rows
 
         # Friendly fallback: if the dropdown is left on BMO but the uploaded PDF
@@ -1829,6 +1915,7 @@ def extract_from_statement_file(path: Path, bank_name: str = "BMO") -> list[Pars
             return rows
         rows = extract_rbc_pdf_transactions(pdf_text)
         if rows:
+            apply_rbc_coordinate_sides(path, rows)
             return rows
 
         if selected_bank == "BMO":
