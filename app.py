@@ -46,6 +46,11 @@ st.markdown(
 def require_password() -> None:
     """Protect hosted deployments when APP_PASSWORD is configured."""
     expected = os.environ.get("APP_PASSWORD", "")
+    if not expected:
+        try:
+            expected = str(st.secrets.get("APP_PASSWORD", ""))
+        except FileNotFoundError:
+            expected = ""
     if not expected or st.session_state.get("authenticated"):
         return
 
