@@ -1301,6 +1301,51 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
     in_activity = False
     pending_description = ""
 
+    period_match = re.search(
+        r"([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})\s+to\s+"
+        r"([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})",
+        joined,
+    )
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    if period_match:
+        try:
+            period_start = datetime.strptime(
+                f"{period_match.group(1)} {period_match.group(2)} {period_match.group(3)}",
+                "%B %d %Y",
+            )
+            period_end = datetime.strptime(
+                f"{period_match.group(4)} {period_match.group(5)} {period_match.group(6)}",
+                "%B %d %Y",
+            )
+        except ValueError:
+            period_start = None
+            period_end = None
+
+    def normalize_rbc_date(date_text: str) -> str:
+        """Attach the correct statement-period year to an RBC day/month label."""
+        try:
+            partial = datetime.strptime(date_text, "%d %b")
+        except ValueError:
+            return date_text
+
+        if period_start is None or period_end is None:
+            return date_text
+
+        candidates = [
+            partial.replace(year=period_start.year),
+            partial.replace(year=period_end.year),
+        ]
+        within_period = [value for value in candidates if period_start <= value <= period_end]
+        if within_period:
+            return min(within_period, key=lambda value: abs((value - period_start).days)).strftime("%Y-%m-%d")
+
+        # This fallback is mainly for OCR errors near a statement boundary.
+        return min(
+            candidates,
+            key=lambda value: min(abs((value - period_start).days), abs((value - period_end).days)),
+        ).strftime("%Y-%m-%d")
+
     credit_markers = (
         "loan credit",
         "mobile cheque deposit",
@@ -1311,18 +1356,21 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
     )
 
     opening_match = re.search(
-        r"Opening balance on ([A-Z][a-z]+) (\d{1,2}), (\d{4}) \$?([\d,]+\.\d{2})",
+        r"Opening balance on ([A-Z][a-z]+) (\d{1,2}),\s*(\d{4}) \$?([\d,]+\.\d{2})",
         joined,
     )
     closing_match = re.search(
-        r"Closing balance on ([A-Z][a-z]+) (\d{1,2}), (\d{4}) = \$?([\d,]+\.\d{2})",
+        r"Closing balance on ([A-Z][a-z]+) (\d{1,2}),\s*(\d{4}) = \$?([\d,]+\.\d{2})",
         joined,
     )
     debit_total_match = re.search(r"Total cheques & debits \(\d+\) - ([\d,]+\.\d{2})", joined)
     credit_total_match = re.search(r"Total deposits & credits \(\d+\) \+ ([\d,]+\.\d{2})", joined)
 
     if opening_match:
-        opening_date = f"{opening_match.group(2)} {opening_match.group(1)[:3]}"
+        opening_date = datetime.strptime(
+            f"{opening_match.group(1)} {opening_match.group(2)} {opening_match.group(3)}",
+            "%B %d %Y",
+        ).strftime("%Y-%m-%d")
         previous_balance = parse_amount(opening_match.group(4))
         rows.append(
             ParsedLine(opening_date, "Opening Balance", None, None, previous_balance, "Opening Balance")
@@ -1383,7 +1431,7 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
 
         date_match = date_re.match(line)
         if date_match:
-            current_date = date_match.group(1)
+            current_date = normalize_rbc_date(date_match.group(1))
             line = clean_text(date_match.group(2))
             if not line:
                 continue
@@ -1409,7 +1457,10 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
         add_transaction(description, amount, balance)
 
     if closing_match:
-        closing_date = f"{closing_match.group(2)} {closing_match.group(1)[:3]}"
+        closing_date = datetime.strptime(
+            f"{closing_match.group(1)} {closing_match.group(2)} {closing_match.group(3)}",
+            "%B %d %Y",
+        ).strftime("%Y-%m-%d")
         closing_balance = parse_amount(closing_match.group(4))
         total_debits = parse_amount(debit_total_match.group(1)) if debit_total_match else None
         total_credits = parse_amount(credit_total_match.group(1)) if credit_total_match else None
