@@ -1416,6 +1416,16 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
         )
         if balance is not None:
             previous_balance = balance
+        elif previous_balance is not None:
+            # RBC often leaves Balance blank for one or more rows. Carry a
+            # calculated balance forward so the next printed balance can
+            # determine whether an ambiguous amount was a debit or credit.
+            previous_balance = round(
+                previous_balance
+                - (0.0 if debit is None else debit)
+                + (0.0 if credit is None else credit),
+                2,
+            )
 
     for line in lines:
         if line.startswith("Account Activity Details"):
