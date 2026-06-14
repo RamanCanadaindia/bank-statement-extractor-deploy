@@ -1628,7 +1628,7 @@ def extract_rbc_credit_card_transactions(pdf_text: str) -> list[ParsedLine]:
         or not re.search(r"(?:Visa|Mastercard)", joined, re.IGNORECASE)
         or "CALCULATING YOUR BALANCE" not in joined
         or not re.search(
-            r"TRANSACTION\s+POSTING\s+ACTIVITY\s+DESCRIPTION\s+AMOUNT",
+            r"ACTIVITY\s+DESCRIPTION\s+AMOUNT",
             joined,
             re.IGNORECASE,
         )
@@ -1735,8 +1735,8 @@ def extract_rbc_credit_card_transactions(pdf_text: str) -> list[ParsedLine]:
         buffer = []
 
     for line in lines:
-        if re.match(
-            r"^TRANSACTION\s+POSTING\s+ACTIVITY\s+DESCRIPTION\s+AMOUNT",
+        if re.search(
+            r"ACTIVITY\s+DESCRIPTION\s+AMOUNT",
             line,
             re.IGNORECASE,
         ):
