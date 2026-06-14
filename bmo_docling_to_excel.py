@@ -166,6 +166,8 @@ def categorize_transaction(description: str) -> str:
         return "E-Transfer"
     if "pre-auth debit" in desc or "pre-authorized payment" in desc:
         return "Pre-Authorized Payment"
+    if "direct deposits (pds) service total" in desc or "pay emp-vendor" in desc:
+        return "Payroll/Vendor Payment"
     if "deposit" in desc or "mobile deposit" in desc:
         return "Income/Deposit"
     if "canadian draft" in desc:
@@ -1354,6 +1356,12 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
         "account payable pmt stanchuck",
         "deposit",
     )
+    debit_markers = (
+        # RBC labels payroll/vendor withdrawals as a "Direct Deposits"
+        # service even though the amount is printed in Cheques & Debits.
+        "direct deposits (pds) service total",
+        "pay emp-vendor",
+    )
 
     opening_match = re.search(
         r"Opening balance on ([A-Z][a-z]+) (\d{1,2}),\s*(\d{4}) \$?([\d,]+\.\d{2})",
@@ -1378,6 +1386,8 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
 
     def is_credit(description: str) -> bool:
         lower = description.lower()
+        if any(marker in lower for marker in debit_markers):
+            return False
         return any(marker in lower for marker in credit_markers)
 
     def add_transaction(description: str, amount: float, balance: float | None) -> None:
