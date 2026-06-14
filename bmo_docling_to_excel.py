@@ -140,7 +140,9 @@ def categorize_transaction(description: str) -> str:
         return "Loan/Line of Credit"
     if "credit card payment" in desc:
         return "Credit Card Payment"
-    if "payment - thank you" in desc or "paiement - merci" in desc:
+    if re.search(r"payment\s*-\s*thank you", desc) or re.search(
+        r"paiement\s*-\s*merci", desc
+    ):
         return "Credit Card Payment"
     if "purchase interest" in desc or "cash advance interest" in desc:
         return "Credit Card Interest"
@@ -1625,26 +1627,36 @@ def extract_rbc_credit_card_transactions(pdf_text: str) -> list[ParsedLine]:
         "RBC" not in joined
         or not re.search(r"(?:Visa|Mastercard)", joined, re.IGNORECASE)
         or "CALCULATING YOUR BALANCE" not in joined
-        or "TRANSACTION POSTING ACTIVITY DESCRIPTION AMOUNT" not in joined
+        or not re.search(
+            r"TRANSACTION\s+POSTING\s+ACTIVITY\s+DESCRIPTION\s+AMOUNT",
+            joined,
+            re.IGNORECASE,
+        )
     ):
         return []
 
     period_match = re.search(
-        r"STATEMENT FROM ([A-Z]{3}) (\d{1,2}) TO ([A-Z]{3}) (\d{1,2}), (\d{4})",
+        r"STATEMENT FROM ([A-Z]{3}) (\d{1,2})(?:,\s*|\s+)"
+        r"(?:([0-9]{4})\s+)?TO ([A-Z]{3}) (\d{1,2}),?\s+([0-9]{4})",
         joined,
     )
     if not period_match:
         return []
 
-    end_year = int(period_match.group(5))
+    end_year = int(period_match.group(6))
     start_month = datetime.strptime(period_match.group(1), "%b").month
-    end_month = datetime.strptime(period_match.group(3), "%b").month
-    start_year = end_year - 1 if start_month > end_month else end_year
+    end_month = datetime.strptime(period_match.group(4), "%b").month
+    explicit_start_year = period_match.group(3)
+    start_year = (
+        int(explicit_start_year)
+        if explicit_start_year
+        else end_year - 1 if start_month > end_month else end_year
+    )
     period_start = datetime.strptime(
         f"{period_match.group(1)} {period_match.group(2)} {start_year}", "%b %d %Y"
     )
     period_end = datetime.strptime(
-        f"{period_match.group(3)} {period_match.group(4)} {end_year}", "%b %d %Y"
+        f"{period_match.group(4)} {period_match.group(5)} {end_year}", "%b %d %Y"
     )
 
     def normalize_card_date(month: str, day: str) -> str:
@@ -1723,7 +1735,11 @@ def extract_rbc_credit_card_transactions(pdf_text: str) -> list[ParsedLine]:
         buffer = []
 
     for line in lines:
-        if line.startswith("TRANSACTION POSTING ACTIVITY DESCRIPTION AMOUNT"):
+        if re.match(
+            r"^TRANSACTION\s+POSTING\s+ACTIVITY\s+DESCRIPTION\s+AMOUNT",
+            line,
+            re.IGNORECASE,
+        ):
             flush_transaction()
             in_activity = True
             continue
