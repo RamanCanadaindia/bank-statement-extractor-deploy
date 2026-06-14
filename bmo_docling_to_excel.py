@@ -140,6 +140,12 @@ def categorize_transaction(description: str) -> str:
         return "Loan/Line of Credit"
     if "credit card payment" in desc:
         return "Credit Card Payment"
+    if "payment - thank you" in desc or "paiement - merci" in desc:
+        return "Credit Card Payment"
+    if "purchase interest" in desc or "cash advance interest" in desc:
+        return "Credit Card Interest"
+    if "overlimit fee" in desc:
+        return "Bank Charges"
     if "loan payment" in desc:
         return "Loan Payment"
     if "loan credit" in desc:
@@ -995,6 +1001,9 @@ def add_balance_formulas(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFra
 
     visible_columns = ["Date", "Description", "Amount", "Category"]
     amount_col = visible_columns.index("Amount") + 1
+    credit_card_statement = df["Description"].astype(str).str.contains(
+        "Previous Statement Balance", case=False, regex=False
+    ).any()
 
     for index, row in df.reset_index(drop=True).iterrows():
         excel_row = index + 2
@@ -1008,7 +1017,8 @@ def add_balance_formulas(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFra
             formula = f"={previous_ref}"
         else:
             previous_ref = worksheet.cell(excel_row - 1, calculated_col).coordinate
-            formula = f'={previous_ref}+IF({amount_ref}="",0,{amount_ref})'
+            operator = "-" if credit_card_statement else "+"
+            formula = f'={previous_ref}{operator}IF({amount_ref}="",0,{amount_ref})'
         worksheet.cell(excel_row, calculated_col, value=formula)
 
     for row_no in range(2, len(df) + 2):
@@ -1591,6 +1601,152 @@ def extract_rbc_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
     return dedupe_transactions(rows)
 
 
+def extract_rbc_credit_card_transactions(pdf_text: str) -> list[ParsedLine]:
+    """Extract RBC Visa/Mastercard activity with charges as debits and payments as credits."""
+    lines = [clean_text(line) for line in pdf_text.splitlines() if clean_text(line)]
+    joined = "\n".join(lines)
+    if (
+        "RBC" not in joined
+        or not re.search(r"(?:Visa|Mastercard)", joined, re.IGNORECASE)
+        or "CALCULATING YOUR BALANCE" not in joined
+        or "TRANSACTION POSTING ACTIVITY DESCRIPTION AMOUNT" not in joined
+    ):
+        return []
+
+    period_match = re.search(
+        r"STATEMENT FROM ([A-Z]{3}) (\d{1,2}) TO ([A-Z]{3}) (\d{1,2}), (\d{4})",
+        joined,
+    )
+    if not period_match:
+        return []
+
+    end_year = int(period_match.group(5))
+    start_month = datetime.strptime(period_match.group(1), "%b").month
+    end_month = datetime.strptime(period_match.group(3), "%b").month
+    start_year = end_year - 1 if start_month > end_month else end_year
+    period_start = datetime.strptime(
+        f"{period_match.group(1)} {period_match.group(2)} {start_year}", "%b %d %Y"
+    )
+    period_end = datetime.strptime(
+        f"{period_match.group(3)} {period_match.group(4)} {end_year}", "%b %d %Y"
+    )
+
+    def normalize_card_date(month: str, day: str) -> str:
+        month_number = datetime.strptime(month, "%b").month
+        year = start_year if month_number >= start_month else end_year
+        return datetime(year, month_number, int(day)).strftime("%Y-%m-%d")
+
+    def summary_amount(label: str) -> float | None:
+        match = re.search(rf"{re.escape(label)}\s+(-?\$?[\d,]+\.\d{{2}})", joined, re.IGNORECASE)
+        return parse_amount(match.group(1)) if match else None
+
+    previous_balance = summary_amount("Previous Statement Balance")
+    payments_credits = summary_amount("Payments & credits")
+    purchases_debits = summary_amount("Purchases & debits")
+    cash_advances = summary_amount("Cash advances")
+    interest = summary_amount("Interest")
+    fees = summary_amount("Fees")
+    new_balance = summary_amount("NEW BALANCE")
+
+    rows: list[ParsedLine] = []
+    if previous_balance is not None:
+        rows.append(
+            ParsedLine(
+                period_start.strftime("%Y-%m-%d"),
+                "Previous Statement Balance",
+                None,
+                None,
+                abs(previous_balance),
+                "Opening Balance",
+            )
+        )
+
+    transaction_re = re.compile(
+        r"^([A-Z]{3}) (\d{1,2}) ([A-Z]{3}) (\d{1,2}) (.+)$"
+    )
+    dollar_re = re.compile(r"-?\$[\d,]+\.\d{2}")
+    in_activity = False
+    buffer: list[str] = []
+    transaction_date = ""
+
+    def flush_transaction() -> None:
+        nonlocal buffer, transaction_date
+        if not buffer or not transaction_date:
+            buffer = []
+            return
+        combined = clean_text(" ".join(buffer))
+        amount_matches = dollar_re.findall(combined)
+        if not amount_matches:
+            buffer = []
+            return
+        amount = parse_amount(amount_matches[-1])
+        if amount is None:
+            buffer = []
+            return
+
+        description = combined
+        for raw in amount_matches:
+            description = clean_text(description.replace(raw, " ", 1))
+        description = re.sub(r"\b\d{18,}\b", "", description)
+        description = clean_text(description)
+
+        if amount < 0:
+            debit, credit = None, abs(amount)
+        else:
+            debit, credit = abs(amount), None
+        rows.append(
+            ParsedLine(
+                transaction_date,
+                description,
+                debit,
+                credit,
+                None,
+                categorize_transaction(description),
+            )
+        )
+        buffer = []
+
+    for line in lines:
+        if line.startswith("TRANSACTION POSTING ACTIVITY DESCRIPTION AMOUNT"):
+            flush_transaction()
+            in_activity = True
+            continue
+        if not in_activity:
+            continue
+        if line.startswith("SUBTOTAL OF MONTHLY ACTIVITY"):
+            flush_transaction()
+            continue
+        if line.startswith("NEW BALANCE") or line.startswith("Please Note:"):
+            flush_transaction()
+            if line.startswith("Please Note:"):
+                break
+            continue
+
+        match = transaction_re.match(line)
+        if match:
+            flush_transaction()
+            transaction_date = normalize_card_date(match.group(1), match.group(2))
+            buffer = [match.group(5)]
+        elif buffer:
+            buffer.append(line)
+    flush_transaction()
+
+    total_debits = sum(abs(value or 0) for value in [purchases_debits, cash_advances, interest, fees])
+    total_credits = abs(payments_credits or 0)
+    if new_balance is not None:
+        rows.append(
+            ParsedLine(
+                period_end.strftime("%Y-%m-%d"),
+                "Closing Totals",
+                round(total_debits, 2),
+                round(total_credits, 2),
+                abs(new_balance),
+                "Closing Totals",
+            )
+        )
+    return dedupe_transactions(rows)
+
+
 def extract_from_statement_file(path: Path, bank_name: str = "BMO") -> list[ParsedLine]:
     """Read JSON or PDF input and dispatch to the best available extractor."""
     suffix = path.suffix.lower()
@@ -1611,6 +1767,9 @@ def extract_from_statement_file(path: Path, bank_name: str = "BMO") -> list[Pars
                 return rows
 
         if selected_bank == "RBC":
+            rows = extract_rbc_credit_card_transactions(pdf_text)
+            if rows:
+                return rows
             rows = extract_rbc_pdf_transactions(pdf_text)
             if rows:
                 return rows
@@ -1622,6 +1781,9 @@ def extract_from_statement_file(path: Path, bank_name: str = "BMO") -> list[Pars
         if rows:
             return rows
         rows = extract_tangerine_pdf_transactions(pdf_text)
+        if rows:
+            return rows
+        rows = extract_rbc_credit_card_transactions(pdf_text)
         if rows:
             return rows
         rows = extract_rbc_pdf_transactions(pdf_text)

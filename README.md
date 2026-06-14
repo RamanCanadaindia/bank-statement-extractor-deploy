@@ -22,6 +22,7 @@ For real bank statements, review the host's privacy, storage, access-control and
 - BMO PDF via Docling, or Docling JSON
 - CIBC PDF
 - RBC PDF
+- RBC Avion Visa Business credit-card PDF
 - Tangerine PDF
 - TD and unfamiliar banks through a generic Docling table/OCR fallback
 
@@ -30,3 +31,5 @@ Known layouts use tuned parsers first. Generic results are marked for review unl
 ## Excel output
 
 The visible Transactions sheet contains Date, Description, Amount, Category and Calculated Balance. Deposits are positive and withdrawals are negative. A hidden Extraction Data sheet preserves source values for validation and annual merging.
+
+For credit cards, payments/refunds are positive and purchases/fees/interest are negative. The calculated outstanding balance uses the credit-card balance direction.

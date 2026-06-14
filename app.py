@@ -24,7 +24,7 @@ importlib.reload(extractor)
 
 
 st.set_page_config(
-    page_title="Bank Statement Extractor",
+    page_title="Raman Financial Services - Bank Statement Extractor",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -54,7 +54,9 @@ def require_password() -> None:
     if not expected or st.session_state.get("authenticated"):
         return
 
-    st.title("Bank Statement Extractor")
+    st.title("Raman Financial Services")
+    st.subheader("Bank Statement Extractor")
+    st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
     password = st.text_input("Password", type="password")
     if st.button("Sign in", type="primary"):
         if hmac.compare_digest(password, expected):
@@ -108,12 +110,15 @@ def reconciliation_status(df: pd.DataFrame) -> dict:
             "message": "Opening or closing balance was not found. Compare the Excel totals with the statement.",
         }
 
-    calculated = round(
-        float(opening.iloc[0])
-        - float(pd.to_numeric(normal["Debit"], errors="coerce").fillna(0).sum())
-        + float(pd.to_numeric(normal["Credit"], errors="coerce").fillna(0).sum()),
-        2,
-    )
+    total_debits = float(pd.to_numeric(normal["Debit"], errors="coerce").fillna(0).sum())
+    total_credits = float(pd.to_numeric(normal["Credit"], errors="coerce").fillna(0).sum())
+    credit_card_statement = df["Description"].astype(str).str.contains(
+        "Previous Statement Balance", case=False, regex=False
+    ).any()
+    if credit_card_statement:
+        calculated = round(float(opening.iloc[0]) + total_debits - total_credits, 2)
+    else:
+        calculated = round(float(opening.iloc[0]) - total_debits + total_credits, 2)
     expected = round(float(closing.iloc[-1]), 2)
     if abs(calculated - expected) <= 0.02:
         return {
@@ -205,7 +210,9 @@ def merge_uploaded_excels(files, output_name: str) -> tuple[bytes, pd.DataFrame,
     return output_path.read_bytes(), transactions, summary, output_path.name
 
 
-st.title("Bank Statement Extractor")
+st.title("Raman Financial Services")
+st.subheader("Bank Statement Extractor")
+st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
 st.caption("Convert bank statements into reviewable Excel transactions, then combine monthly files into an annual workbook.")
 
 extract_tab, annual_tab, guide_tab = st.tabs(["Extract statements", "Build annual file", "Guide"])
@@ -221,7 +228,7 @@ with extract_tab:
             help="Upload one statement or several monthly statements.",
         )
         process_clicked = st.button("Extract transactions", type="primary", use_container_width=True)
-        st.caption("Tuned: BMO, CIBC, RBC and Tangerine. TD and other banks use the Docling fallback.")
+        st.caption("Tuned: BMO, CIBC, RBC bank accounts, RBC Visa Business and Tangerine. TD and other banks use the Docling fallback.")
 
     with right:
         st.subheader("Processing status")
