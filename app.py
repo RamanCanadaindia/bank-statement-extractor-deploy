@@ -70,7 +70,7 @@ def require_password() -> None:
 require_password()
 
 
-SUPPORTED_BANKS = ["Auto-detect", "BMO", "CIBC", "RBC", "Tangerine", "TD", "Other bank"]
+SUPPORTED_BANKS = ["Auto-detect", "BMO", "CIBC", "RBC", "Tangerine", "Vancity", "TD", "Other bank"]
 
 
 def safe_name(value: str) -> str:

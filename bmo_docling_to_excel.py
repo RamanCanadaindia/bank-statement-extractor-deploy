@@ -175,7 +175,7 @@ def categorize_transaction(description: str) -> str:
         return "Bill Payment"
     if "cheque" in desc:
         return "Cheque"
-    if "e-transfer" in desc:
+    if "e-transfer" in desc or "etransfer" in desc:
         return "E-Transfer"
     if "pre-auth debit" in desc or "pre-authorized payment" in desc:
         return "Pre-Authorized Payment"
@@ -897,6 +897,8 @@ def detect_bank_from_file(path: Path) -> str:
     name = path.name.lower()
     if "tangerine" in name:
         return "Tangerine"
+    if "vancity" in name or "vcty" in name:
+        return "Vancity"
     if "cibc" in name:
         return "CIBC"
     if "bmo" in name or "bank of montreal" in name:
@@ -921,6 +923,8 @@ def detect_bank_from_file(path: Path) -> str:
 
     if "tangerine" in text:
         return "Tangerine"
+    if "vancity" in text or "van city" in text:
+        return "Vancity"
     if "cibc" in text:
         return "CIBC"
     if "bmo" in text or "bank of montreal" in text:
@@ -1345,6 +1349,204 @@ def extract_tangerine_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
             buffer = clean_text(f"{buffer} {line}")
 
     flush_buffer()
+    return dedupe_transactions(rows)
+
+
+def _normalize_vancity_line(line: str) -> str:
+    """Repair Vancity PDF text where OCR inserts spaces inside dates and amounts."""
+    text = clean_text(line)
+    for month in ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"):
+        pattern = r"\s*".join(month)
+        text = re.sub(pattern, month, text, flags=re.IGNORECASE)
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(r"(?<=\d)\s+(?=[\d,.])", "", text)
+        text = re.sub(r"(?<=[,.])\s+(?=\d)", "", text)
+    text = re.sub(r"^(\d)\s+(\d)\s+([A-Z]{3})\b", r"\1\2 \3", text, flags=re.IGNORECASE)
+    return clean_text(text)
+
+
+def _clean_vancity_description(description: str) -> str:
+    replacements = {
+        "ETRA NS FER D EB IT": "ETRANSFER DEBIT",
+        "PRE AU THORIZE D CRE DIT": "PRE AUTHORIZED CREDIT",
+        "CHA RGES A PP L I E D TO A CCOU NT": "CHARGES APPLIED TO ACCOUNT",
+        "VC INIT TRF T O RE L": "VC INIT TRF TO REL",
+        "UB ER HO LD INGS CA NAD": "UBER HOLDINGS CANADA",
+        "LY FT": "LYFT",
+        "CAN AD A": "CANADA",
+        "RAMA N": "RAMAN",
+        "KU MAR": "KUMAR",
+        "PE RI O DIC FL AT FEE": "PERIODIC FLAT FEE",
+        "P AP E R STMT FEE": "PAPER STMT FEE",
+    }
+    text = clean_text(description)
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return clean_text(text)
+
+
+def extract_vancity_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
+    """Extract Vancity chequing transactions from readable PDF text."""
+    raw_lines = [_normalize_vancity_line(line) for line in pdf_text.splitlines()]
+    lines = [line for line in raw_lines if line]
+    joined = "\n".join(lines)
+    compact_joined = re.sub(r"[^a-z0-9]+", "", joined.lower())
+    if "vancity" not in compact_joined or "accountsummary" not in compact_joined:
+        return []
+
+    money_re = re.compile(r"-?\$?\d{1,3}(?:,\d{3})*\.\d{2}")
+    row_start_re = re.compile(r"^(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(.+)$", re.IGNORECASE)
+    date_only_re = re.compile(r"^(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)$", re.IGNORECASE)
+    period_match = re.search(
+        r"(\d{1,2})\s+([A-Z]{3})\s+(\d{4})\s+to\s+(\d{1,2})\s+([A-Z]{3})\s+(\d{4})",
+        joined,
+        re.IGNORECASE,
+    )
+    start_year = end_year = None
+    start_month = end_month = None
+    if period_match:
+        start_year = int(period_match.group(3))
+        end_year = int(period_match.group(6))
+        start_month = datetime.strptime(period_match.group(2).upper(), "%b").month
+        end_month = datetime.strptime(period_match.group(5).upper(), "%b").month
+
+    def normalize_date(day: str, month: str) -> str:
+        try:
+            month_number = datetime.strptime(month.upper(), "%b").month
+        except ValueError:
+            return f"{day} {month}"
+        year = end_year or start_year or datetime.now().year
+        if start_year and end_year and start_month and end_month:
+            year = start_year if month_number >= start_month else end_year
+        return datetime(year, month_number, int(day)).strftime("%Y-%m-%d")
+
+    summary_re = re.compile(
+        r"VANCITYESSENTIALCHEQUING#\d+(\d{1,3}(?:,\d{3})*\.\d{2})"
+        r"(\d{1,3}(?:,\d{3})*\.\d{2})(\d{1,3}(?:,\d{3})*\.\d{2})"
+        r"(\d{1,3}(?:,\d{3})*\.\d{2})",
+        re.IGNORECASE,
+    )
+    compact_summary = re.sub(r"[^A-Za-z0-9#,.]+", "", joined)
+    summary_match = summary_re.search(compact_summary)
+    opening_balance = parse_amount(summary_match.group(1)) if summary_match else None
+    total_withdrawals = parse_amount(summary_match.group(2)) if summary_match else None
+    total_deposits = parse_amount(summary_match.group(3)) if summary_match else None
+    closing_balance = parse_amount(summary_match.group(4)) if summary_match else None
+
+    rows: list[ParsedLine] = []
+    previous_balance: float | None = None
+    buffer = ""
+    current_date = ""
+    in_chequing = False
+
+    def flush_buffer() -> None:
+        nonlocal buffer, previous_balance
+        text = clean_text(buffer)
+        buffer = ""
+        if not text or not current_date:
+            return
+        amounts = [parse_amount(value) for value in money_re.findall(text)]
+        amounts = [amount for amount in amounts if amount is not None]
+        if len(amounts) < 2:
+            return
+        amount = abs(amounts[-2])
+        balance = amounts[-1]
+        description = text
+        for raw in money_re.findall(text):
+            description = clean_text(description.replace(raw, " ", 1))
+        description = _clean_vancity_description(description)
+        if not description or "opening balance" in description.lower():
+            return
+
+        debit = credit = None
+        if previous_balance is not None:
+            delta = round(balance - previous_balance, 2)
+            if delta > 0:
+                credit = amount
+            elif delta < 0:
+                debit = amount
+        if debit is None and credit is None:
+            debit, credit = decide_debit_credit(description, amount)
+        rows.append(
+            ParsedLine(
+                current_date,
+                description,
+                debit,
+                credit,
+                balance,
+                categorize_transaction(description),
+            )
+        )
+        previous_balance = balance
+
+    for line in lines:
+        compact_line = re.sub(r"[^a-z0-9#]+", "", line.lower())
+        if compact_line.startswith("vancityessentialchequing#100087084700") and not money_re.search(line):
+            in_chequing = True
+            continue
+        if in_chequing and (
+            compact_line.startswith("shares")
+            or compact_line.startswith("classbmembershipshares")
+            or compact_line.startswith("pleasereview")
+        ):
+            flush_buffer()
+            break
+        if not in_chequing:
+            continue
+        if compact_line.startswith("date") or compact_line.startswith("withdrawals"):
+            continue
+        if "openingbalance" in compact_line:
+            amount = parse_amount(money_re.findall(line)[-1]) if money_re.findall(line) else opening_balance
+            if amount is not None and previous_balance is None:
+                previous_balance = amount
+                rows.append(
+                    ParsedLine(
+                        normalize_date(period_match.group(1), period_match.group(2)) if period_match else "",
+                        "Opening Balance",
+                        None,
+                        None,
+                        amount,
+                        "Opening Balance",
+                    )
+                )
+            continue
+
+        match = row_start_re.match(line)
+        if match:
+            flush_buffer()
+            current_date = normalize_date(match.group(1), match.group(2))
+            buffer = match.group(3)
+            if len(money_re.findall(buffer)) >= 2:
+                flush_buffer()
+            continue
+        date_only_match = date_only_re.match(line)
+        if date_only_match:
+            flush_buffer()
+            current_date = normalize_date(date_only_match.group(1), date_only_match.group(2))
+            buffer = ""
+            continue
+        if buffer:
+            buffer = clean_text(f"{buffer} {line}")
+            if len(money_re.findall(buffer)) >= 2:
+                flush_buffer()
+        elif current_date:
+            buffer = line
+
+    flush_buffer()
+
+    if closing_balance is not None and period_match:
+        rows.append(
+            ParsedLine(
+                normalize_date(period_match.group(4), period_match.group(5)),
+                "Closing Totals",
+                total_withdrawals,
+                total_deposits,
+                closing_balance,
+                "Closing Totals",
+            )
+        )
     return dedupe_transactions(rows)
 
 
@@ -1895,6 +2097,11 @@ def extract_from_statement_file(path: Path, bank_name: str = "BMO") -> list[Pars
             if rows:
                 return rows
 
+        if selected_bank == "VANCITY":
+            rows = extract_vancity_pdf_transactions(pdf_text)
+            if rows:
+                return rows
+
         if selected_bank == "RBC":
             rows = extract_rbc_credit_card_transactions(pdf_text)
             if rows:
@@ -1911,6 +2118,9 @@ def extract_from_statement_file(path: Path, bank_name: str = "BMO") -> list[Pars
         if rows:
             return rows
         rows = extract_tangerine_pdf_transactions(pdf_text)
+        if rows:
+            return rows
+        rows = extract_vancity_pdf_transactions(pdf_text)
         if rows:
             return rows
         rows = extract_rbc_credit_card_transactions(pdf_text)
