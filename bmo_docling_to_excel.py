@@ -827,6 +827,7 @@ def merge_excel_files(input_paths: list[Path], output_path: Path) -> Path:
 
         df.insert(0, "Source File", path.name)
         df["_source_order"] = source_order
+        df["_row_order"] = range(len(df))
         is_balance_row = df["Category"].isin(["Opening Balance", "Closing Totals"])
         balance_frames.append(df[is_balance_row].copy())
         frames.append(df[~is_balance_row].copy())
@@ -837,15 +838,14 @@ def merge_excel_files(input_paths: list[Path], output_path: Path) -> Path:
     annual_df = pd.concat(frames, ignore_index=True)
     balances_df = pd.concat(balance_frames, ignore_index=True) if balance_frames else pd.DataFrame()
 
-    # Keep every statement together, then sort transactions within that file.
-    sortable_dates = pd.to_datetime(annual_df["Date"], errors="coerce")
-    if sortable_dates.notna().any():
-        annual_df = annual_df.assign(_sort_date=sortable_dates).sort_values(
-            ["_source_order", "_sort_date"], na_position="last"
-        ).drop(columns=["_sort_date"])
-    annual_df = annual_df.drop(columns=["_source_order"])
+    # Keep every statement together and preserve the row order printed by the bank.
+    annual_df = annual_df.sort_values(["_source_order", "_row_order"]).drop(
+        columns=["_source_order", "_row_order"]
+    )
     if not balances_df.empty:
-        balances_df = balances_df.sort_values("_source_order").drop(columns=["_source_order"])
+        balances_df = balances_df.sort_values(["_source_order", "_row_order"]).drop(
+            columns=["_source_order", "_row_order"]
+        )
 
     summary_df = pd.DataFrame(
         [
