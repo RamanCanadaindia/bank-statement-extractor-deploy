@@ -219,6 +219,23 @@ def merge_uploaded_excels(files, output_name: str) -> tuple[bytes, pd.DataFrame,
     return output_path.read_bytes(), transactions, summary, output_path.name
 
 
+def merge_extracted_results(results: list[dict], output_name: str) -> tuple[bytes, pd.DataFrame, pd.DataFrame, str]:
+    work_dir = Path(tempfile.mkdtemp(prefix="annual-from-extract-"))
+    paths = []
+    for index, result in enumerate(results, start=1):
+        path = work_dir / f"{index:02d}_{safe_name(result['output_name'])}"
+        path.write_bytes(result["output_bytes"])
+        paths.append(path)
+
+    output_name = safe_name(output_name or "Annual_transactions.xlsx")
+    if not output_name.lower().endswith(".xlsx"):
+        output_name += ".xlsx"
+    output_path = extractor.merge_excel_files(paths, work_dir / output_name)
+    transactions = pd.read_excel(output_path, sheet_name="Annual Transactions")
+    summary = pd.read_excel(output_path, sheet_name="Annual Summary")
+    return output_path.read_bytes(), transactions, summary, output_path.name
+
+
 st.title("Raman Financial Services")
 st.subheader("Bank Statement Extractor")
 st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
@@ -264,12 +281,24 @@ with extract_tab:
             if successes:
                 st.success(f"Created {len(successes)} Excel file(s).")
                 if len(successes) > 1:
+                    annual_data, annual_transactions, annual_summary, annual_filename = merge_extracted_results(
+                        successes,
+                        "Annual_transactions.xlsx",
+                    )
                     st.download_button(
-                        "Download all Excel files",
+                        "Download one annual workbook",
+                        data=annual_data,
+                        file_name=annual_filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                    )
+                    with st.expander("Preview annual summary"):
+                        st.dataframe(annual_summary, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "Download monthly Excel files as ZIP",
                         data=make_zip(successes),
                         file_name="bank_statement_excels.zip",
                         mime="application/zip",
-                        type="primary",
                     )
 
                 for result in successes:
