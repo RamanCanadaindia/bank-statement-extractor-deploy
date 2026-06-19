@@ -365,7 +365,8 @@ with guide_tab:
         "2025-02_RBC_Chequing.pdf\n"
         "2025-02_RBC_Visa.pdf\n"
         "2025-02_TD_Chequing.pdf\n"
-        "2025-02_Tangerine_Chequing.pdf",
+        "2025-02_Tangerine_Chequing.pdf\n"
+        "2025-02_Vancity_Chequing.pdf",
         language="text",
     )
     st.subheader("Review checklist")
