@@ -1331,7 +1331,10 @@ def extract_tangerine_pdf_transactions(pdf_text: str) -> list[ParsedLine]:
             continue
         if not in_details:
             continue
-        if line.startswith("Up to $100") or line.startswith("Nobody likes mistakes") or line.startswith("Page "):
+        if line.startswith("Page "):
+            flush_buffer()
+            continue
+        if line.startswith("Up to $100") or line.startswith("Nobody likes mistakes"):
             flush_buffer()
             break
 
