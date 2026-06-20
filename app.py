@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import zipfile
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -71,18 +72,32 @@ require_password()
 
 
 SUPPORTED_BANKS = ["Auto-detect", "BMO", "CIBC", "RBC", "Tangerine", "Vancity", "TD", "Other bank"]
-DEFAULT_PAYROLL_TEMPLATE_URL = "https://docs.google.com/spreadsheets/d/1nv4k-mRjNQ_2U5uuMS8z26ZQWHMyuILR1cndIAgs0mk/copy"
-
-
-def get_payroll_template_url() -> str:
-    """Read the master payroll template link without hard-coding it in public code."""
-    value = os.environ.get("PAYROLL_TEMPLATE_URL", "")
-    if value:
-        return value
-    try:
-        return str(st.secrets.get("PAYROLL_TEMPLATE_URL", DEFAULT_PAYROLL_TEMPLATE_URL))
-    except FileNotFoundError:
-        return DEFAULT_PAYROLL_TEMPLATE_URL
+PAY_PERIODS = {"Weekly": 52, "Biweekly": 26, "Semi-monthly": 24, "Monthly": 12}
+FED_BRACKETS_2026 = [
+    (58523, 0.14),
+    (117045, 0.205),
+    (181440, 0.26),
+    (258482, 0.29),
+    (float("inf"), 0.33),
+]
+BC_BRACKETS_2026 = [
+    (50363, 0.0506),
+    (100728, 0.0770),
+    (115648, 0.1050),
+    (140430, 0.1229),
+    (190405, 0.1470),
+    (265545, 0.1680),
+    (float("inf"), 0.2050),
+]
+FED_BPA_2026 = 16452
+BC_BPA_2026 = 13216
+CPP1_RATE = 0.0595
+CPP2_RATE = 0.04
+CPP_BASIC_EXEMPTION = 3500
+CPP1_YMPE = 71300
+CPP2_YAMPE = 81200
+EI_RATE = 0.0163
+EI_MIE = 68900
 
 
 def safe_name(value: str) -> str:
@@ -248,6 +263,140 @@ def merge_extracted_results(results: list[dict], output_name: str) -> tuple[byte
     return output_path.read_bytes(), transactions, summary, output_path.name
 
 
+def progressive_tax(annual_income: float, brackets: list[tuple[float, float]]) -> float:
+    tax = 0.0
+    previous_limit = 0.0
+    for limit, rate in brackets:
+        taxable = min(annual_income, limit) - previous_limit
+        if taxable > 0:
+            tax += taxable * rate
+        if annual_income <= limit:
+            break
+        previous_limit = limit
+    return max(0.0, tax)
+
+
+def calculate_payroll(values: dict) -> dict:
+    periods = PAY_PERIODS[values["frequency"]]
+    regular_pay = values["hours"] * values["rate"]
+    overtime_pay = values["overtime_hours"] * values["overtime_rate"]
+    gross = (
+        regular_pay
+        + overtime_pay
+        + values["stat_pay"]
+        + values["vacation_pay"]
+        + values["bonus"]
+    )
+
+    annualized_gross = gross * periods
+    cpp1_base = max(0.0, min(annualized_gross, CPP1_YMPE) - CPP_BASIC_EXEMPTION)
+    cpp1 = min(cpp1_base * CPP1_RATE / periods, max(0.0, (CPP1_YMPE - CPP_BASIC_EXEMPTION) * CPP1_RATE - values["ytd_cpp"]))
+    cpp2_base = max(0.0, min(annualized_gross, CPP2_YAMPE) - CPP1_YMPE)
+    cpp2 = min(cpp2_base * CPP2_RATE / periods, max(0.0, (CPP2_YAMPE - CPP1_YMPE) * CPP2_RATE - values["ytd_cpp2"]))
+    cpp = round(max(0.0, cpp1 + cpp2), 2)
+
+    ei_max = EI_MIE * EI_RATE
+    ei = round(min(gross * EI_RATE, max(0.0, ei_max - values["ytd_ei"])), 2)
+
+    federal_annual = progressive_tax(annualized_gross, FED_BRACKETS_2026)
+    federal_credit = FED_BPA_2026 * 0.14
+    tax_fed = round(max(0.0, federal_annual - federal_credit) / periods, 2)
+
+    bc_annual = progressive_tax(annualized_gross, BC_BRACKETS_2026)
+    bc_credit = BC_BPA_2026 * 0.0506
+    tax_prov = round(max(0.0, bc_annual - bc_credit) / periods, 2)
+
+    deductions = cpp + ei + tax_fed + tax_prov + values["other_deductions"]
+    net = round(gross - deductions + values["reimbursements"], 2)
+    return {
+        "regular_pay": round(regular_pay, 2),
+        "overtime_pay": round(overtime_pay, 2),
+        "gross": round(gross, 2),
+        "cpp": cpp,
+        "ei": ei,
+        "tax_fed": tax_fed,
+        "tax_prov": tax_prov,
+        "other_deductions": round(values["other_deductions"], 2),
+        "reimbursements": round(values["reimbursements"], 2),
+        "total_deductions": round(deductions, 2),
+        "net": net,
+        "employer_cpp": cpp,
+        "employer_ei": round(ei * 1.4, 2),
+    }
+
+
+def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) -> bytes:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ImportError as exc:
+        raise RuntimeError("Payslip PDF requires reportlab. Install requirements and restart the app.") from exc
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=0.6 * inch, leftMargin=0.6 * inch)
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph(company["name"], styles["Title"]),
+        Paragraph(company["address"], styles["Normal"]),
+        Spacer(1, 12),
+        Paragraph("Payslip", styles["Heading2"]),
+    ]
+
+    details = [
+        ["Employee", employee["name"], "Pay date", str(payroll["pay_date"])],
+        ["Position", employee["position"], "Pay period", f"{payroll['pay_start']} to {payroll['pay_end']}"],
+        ["Frequency", payroll["frequency"], "Province", "BC"],
+    ]
+    earnings = [
+        ["Earnings", "Amount"],
+        ["Regular pay", calc["regular_pay"]],
+        ["Overtime pay", calc["overtime_pay"]],
+        ["Stat pay", payroll["stat_pay"]],
+        ["Vacation pay", payroll["vacation_pay"]],
+        ["Bonus", payroll["bonus"]],
+        ["Gross pay", calc["gross"]],
+    ]
+    deductions = [
+        ["Deductions", "Amount"],
+        ["CPP", payroll["cpp"]],
+        ["EI", payroll["ei"]],
+        ["Federal tax", payroll["tax_fed"]],
+        ["Provincial tax", payroll["tax_prov"]],
+        ["Other deductions", payroll["other_deductions"]],
+        ["Total deductions", payroll["total_deductions"]],
+        ["Reimbursements", payroll["reimbursements"]],
+        ["Net pay", payroll["net"]],
+    ]
+
+    def money_table(rows: list[list]) -> Table:
+        formatted = [[row[0], row[1] if isinstance(row[1], str) else f"${row[1]:,.2f}"] for row in rows]
+        table = Table(formatted, colWidths=[3.0 * inch, 2.0 * inch])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF7")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CAD2E0")),
+                    ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+        return table
+
+    details_table = Table(details, colWidths=[1.2 * inch, 2.3 * inch, 1.2 * inch, 2.0 * inch])
+    details_table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CAD2E0"))]))
+    story.extend([details_table, Spacer(1, 14), money_table(earnings), Spacer(1, 14), money_table(deductions)])
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("Review payroll deductions against CRA PDOC before filing remittances.", styles["Italic"]))
+    doc.build(story)
+    return buffer.getvalue()
+
+
 st.title("Raman Financial Services")
 st.subheader("Bank Statement Extractor")
 st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
@@ -371,29 +520,125 @@ with annual_tab:
                 st.error(str(exc))
 
 with payroll_tab:
-    st.subheader("Payroll template")
-    st.caption("You own the master template. Each user makes a private copy in their own Google Drive.")
-    payroll_template_url = get_payroll_template_url()
-    if payroll_template_url:
-        st.link_button("Make a private payroll copy", payroll_template_url, type="primary")
-    else:
-        st.info(
-            "Payroll template link is not configured yet. Add PAYROLL_TEMPLATE_URL "
-            "in Streamlit secrets after the master Google Sheet template is ready."
-        )
+    st.subheader("Payroll calculator")
+    st.caption("Enter one pay period, review deductions, then download a payslip PDF.")
 
-    st.markdown(
-        "1. Open the master payroll template.\n"
-        "2. Click File > Make a copy.\n"
-        "3. Save the copy in the user's own Google Drive.\n"
-        "4. Fill Employees and Payroll tabs in that private copy.\n"
-        "5. Use the Payroll menu inside Google Sheets to generate payslips and reports."
-    )
-    st.warning(
-        "Privacy model: users own their copied sheet and payroll data. Raman Financial Services "
-        "owns the master template and website, but copied payroll records stay in the user's Drive "
-        "unless they share access."
-    )
+    with st.form("payroll-form"):
+        st.markdown("**Company**")
+        company_cols = st.columns(2)
+        company_name = company_cols[0].text_input("Company name", value="Raman Tax & Accounting Inc.")
+        company_address = company_cols[1].text_input("Company address", value="Surrey, BC")
+
+        st.markdown("**Employee**")
+        emp_cols = st.columns(3)
+        employee_name = emp_cols[0].text_input("Employee name")
+        employee_id = emp_cols[1].text_input("Employee ID")
+        position = emp_cols[2].text_input("Position")
+
+        st.markdown("**Pay period**")
+        period_cols = st.columns(4)
+        frequency = period_cols[0].selectbox("Pay frequency", list(PAY_PERIODS.keys()), index=1)
+        pay_start = period_cols[1].date_input("Pay start", value=date.today())
+        pay_end = period_cols[2].date_input("Pay end", value=date.today())
+        pay_date = period_cols[3].date_input("Pay date", value=date.today())
+
+        st.markdown("**Earnings**")
+        earn_cols = st.columns(4)
+        hours = earn_cols[0].number_input("Regular hours", min_value=0.0, value=0.0, step=0.5)
+        rate = earn_cols[1].number_input("Hourly rate", min_value=0.0, value=0.0, step=0.5)
+        overtime_hours = earn_cols[2].number_input("Overtime hours", min_value=0.0, value=0.0, step=0.5)
+        overtime_rate = earn_cols[3].number_input("Overtime rate", min_value=0.0, value=0.0, step=0.5)
+        earn_cols2 = st.columns(4)
+        stat_pay = earn_cols2[0].number_input("Stat pay", min_value=0.0, value=0.0, step=10.0)
+        vacation_pay = earn_cols2[1].number_input("Vacation pay paid", min_value=0.0, value=0.0, step=10.0)
+        bonus = earn_cols2[2].number_input("Bonus/other taxable pay", min_value=0.0, value=0.0, step=10.0)
+        reimbursements = earn_cols2[3].number_input("Reimbursements", min_value=0.0, value=0.0, step=10.0)
+
+        st.markdown("**Year-to-date caps**")
+        ytd_cols = st.columns(3)
+        ytd_cpp = ytd_cols[0].number_input("YTD CPP already deducted", min_value=0.0, value=0.0, step=10.0)
+        ytd_cpp2 = ytd_cols[1].number_input("YTD CPP2 already deducted", min_value=0.0, value=0.0, step=10.0)
+        ytd_ei = ytd_cols[2].number_input("YTD EI already deducted", min_value=0.0, value=0.0, step=10.0)
+
+        st.markdown("**Manual adjustment**")
+        other_deductions = st.number_input("Other deductions", min_value=0.0, value=0.0, step=10.0)
+        submitted = st.form_submit_button("Calculate payroll", type="primary")
+
+    if submitted:
+        payroll_input = {
+            "frequency": frequency,
+            "hours": hours,
+            "rate": rate,
+            "overtime_hours": overtime_hours,
+            "overtime_rate": overtime_rate,
+            "stat_pay": stat_pay,
+            "vacation_pay": vacation_pay,
+            "bonus": bonus,
+            "reimbursements": reimbursements,
+            "other_deductions": other_deductions,
+            "ytd_cpp": ytd_cpp,
+            "ytd_cpp2": ytd_cpp2,
+            "ytd_ei": ytd_ei,
+        }
+        calc = calculate_payroll(payroll_input)
+        st.session_state["payroll_calc"] = {
+            "company": {"name": company_name, "address": company_address},
+            "employee": {"name": employee_name or "Employee", "id": employee_id, "position": position},
+            "payroll": {
+                **payroll_input,
+                "pay_start": pay_start,
+                "pay_end": pay_end,
+                "pay_date": pay_date,
+            },
+            "calc": calc,
+        }
+
+    saved = st.session_state.get("payroll_calc")
+    if saved:
+        calc = saved["calc"]
+        st.markdown("**Payroll result**")
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("Gross pay", f"${calc['gross']:,.2f}")
+        metric_cols[1].metric("Employee deductions", f"${calc['total_deductions']:,.2f}")
+        metric_cols[2].metric("Net pay", f"${calc['net']:,.2f}")
+        metric_cols[3].metric("Employer cost add-on", f"${calc['employer_cpp'] + calc['employer_ei']:,.2f}")
+
+        result_df = pd.DataFrame(
+            [
+                {"Item": "Regular pay", "Amount": calc["regular_pay"]},
+                {"Item": "Overtime pay", "Amount": calc["overtime_pay"]},
+                {"Item": "Gross pay", "Amount": calc["gross"]},
+                {"Item": "CPP", "Amount": -calc["cpp"]},
+                {"Item": "EI", "Amount": -calc["ei"]},
+                {"Item": "Federal tax", "Amount": -calc["tax_fed"]},
+                {"Item": "BC tax", "Amount": -calc["tax_prov"]},
+                {"Item": "Other deductions", "Amount": -calc["other_deductions"]},
+                {"Item": "Reimbursements", "Amount": calc["reimbursements"]},
+                {"Item": "Net pay", "Amount": calc["net"]},
+                {"Item": "Employer CPP", "Amount": calc["employer_cpp"]},
+                {"Item": "Employer EI", "Amount": calc["employer_ei"]},
+            ]
+        )
+        st.dataframe(result_df, use_container_width=True, hide_index=True)
+
+        pdf_payroll = {
+            **saved["payroll"],
+            "cpp": calc["cpp"],
+            "ei": calc["ei"],
+            "tax_fed": calc["tax_fed"],
+            "tax_prov": calc["tax_prov"],
+            "total_deductions": calc["total_deductions"],
+            "net": calc["net"],
+        }
+        pdf_bytes = build_payslip_pdf(saved["company"], saved["employee"], pdf_payroll, calc)
+        st.download_button(
+            "Download payslip PDF",
+            data=pdf_bytes,
+            file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.pdf",
+            mime="application/pdf",
+            type="primary",
+        )
+        st.warning("Payroll calculations should be reviewed against CRA PDOC before remitting or filing.")
 
 with guide_tab:
     st.subheader("Recommended file names")
