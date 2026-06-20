@@ -98,6 +98,48 @@ CPP1_YMPE = 71300
 CPP2_YAMPE = 81200
 EI_RATE = 0.0163
 EI_MIE = 68900
+PAYROLL_COLUMNS = [
+    "employee_id",
+    "pay_start",
+    "pay_end",
+    "pay_date",
+    "hours",
+    "rate",
+    "salary_amount",
+    "overtime_hours",
+    "overtime_rate",
+    "overtime_pay",
+    "regular_pay",
+    "stat_pay",
+    "sick_pay",
+    "vacation_pay",
+    "vac_accrual",
+    "gross",
+    "cpp",
+    "ei",
+    "tax_fed",
+    "tax_prov",
+    "other_d",
+    "reimb",
+    "net",
+    "ytd_gross",
+    "ytd_cpp",
+    "ytd_ei",
+    "ytd_tax_fed",
+    "ytd_tax_prov",
+    "ytd_other_d",
+    "ytd_reimb",
+    "ytd_net",
+    "ytd_regular_pay",
+    "ytd_stat_pay",
+    "ytd_sick_pay",
+    "ytd_vacation_pay",
+    "ytd_overtime_pay",
+    "ytd_vac_accrual",
+    "ytd_vac_paid",
+    "pdf_link",
+    "status",
+]
 
 
 def safe_name(value: str) -> str:
@@ -282,8 +324,10 @@ def calculate_payroll(values: dict) -> dict:
     overtime_pay = values["overtime_hours"] * values["overtime_rate"]
     gross = (
         regular_pay
+        + values["salary_amount"]
         + overtime_pay
         + values["stat_pay"]
+        + values["sick_pay"]
         + values["vacation_pay"]
         + values["bonus"]
     )
@@ -323,6 +367,127 @@ def calculate_payroll(values: dict) -> dict:
         "employer_cpp": cpp,
         "employer_ei": round(ei * 1.4, 2),
     }
+
+
+def load_payroll_register(uploaded_file) -> pd.DataFrame:
+    if uploaded_file is None:
+        return pd.DataFrame(columns=PAYROLL_COLUMNS)
+    try:
+        workbook = pd.ExcelFile(uploaded_file)
+        sheet_name = "Payroll" if "Payroll" in workbook.sheet_names else workbook.sheet_names[0]
+        df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
+    except Exception as exc:
+        raise RuntimeError(f"Could not read payroll register: {exc}") from exc
+    for column in PAYROLL_COLUMNS:
+        if column not in df.columns:
+            df[column] = pd.NA
+    return df[PAYROLL_COLUMNS]
+
+
+def payroll_ytd_before(register: pd.DataFrame, employee_id: str) -> dict:
+    if register.empty or not employee_id:
+        base = register
+    else:
+        base = register[register["employee_id"].astype(str).str.strip() == str(employee_id).strip()]
+    fields = [
+        "gross",
+        "cpp",
+        "ei",
+        "tax_fed",
+        "tax_prov",
+        "other_d",
+        "reimb",
+        "net",
+        "regular_pay",
+        "stat_pay",
+        "sick_pay",
+        "vacation_pay",
+        "overtime_pay",
+        "vac_accrual",
+    ]
+    return {
+        field: float(pd.to_numeric(base.get(field, pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        for field in fields
+    }
+
+
+def make_payroll_register_row(values: dict, calc: dict, ytd_before: dict) -> dict:
+    ytd = {
+        "gross": ytd_before["gross"] + calc["gross"],
+        "cpp": ytd_before["cpp"] + calc["cpp"],
+        "ei": ytd_before["ei"] + calc["ei"],
+        "tax_fed": ytd_before["tax_fed"] + calc["tax_fed"],
+        "tax_prov": ytd_before["tax_prov"] + calc["tax_prov"],
+        "other_d": ytd_before["other_d"] + calc["other_deductions"],
+        "reimb": ytd_before["reimb"] + calc["reimbursements"],
+        "net": ytd_before["net"] + calc["net"],
+        "regular_pay": ytd_before["regular_pay"] + calc["regular_pay"],
+        "stat_pay": ytd_before["stat_pay"] + values["stat_pay"],
+        "sick_pay": ytd_before["sick_pay"] + values["sick_pay"],
+        "vacation_pay": ytd_before["vacation_pay"] + values["vacation_pay"],
+        "overtime_pay": ytd_before["overtime_pay"] + calc["overtime_pay"],
+        "vac_accrual": ytd_before["vac_accrual"] + values["vac_accrual"],
+    }
+    row = {column: pd.NA for column in PAYROLL_COLUMNS}
+    row.update(
+        {
+            "employee_id": values["employee_id"],
+            "pay_start": values["pay_start"],
+            "pay_end": values["pay_end"],
+            "pay_date": values["pay_date"],
+            "hours": values["hours"],
+            "rate": values["rate"],
+            "salary_amount": values["salary_amount"],
+            "overtime_hours": values["overtime_hours"],
+            "overtime_rate": values["overtime_rate"],
+            "overtime_pay": calc["overtime_pay"],
+            "regular_pay": calc["regular_pay"],
+            "stat_pay": values["stat_pay"],
+            "sick_pay": values["sick_pay"],
+            "vacation_pay": values["vacation_pay"],
+            "vac_accrual": values["vac_accrual"],
+            "gross": calc["gross"],
+            "cpp": calc["cpp"],
+            "ei": calc["ei"],
+            "tax_fed": calc["tax_fed"],
+            "tax_prov": calc["tax_prov"],
+            "other_d": calc["other_deductions"],
+            "reimb": calc["reimbursements"],
+            "net": calc["net"],
+            "ytd_gross": round(ytd["gross"], 2),
+            "ytd_cpp": round(ytd["cpp"], 2),
+            "ytd_ei": round(ytd["ei"], 2),
+            "ytd_tax_fed": round(ytd["tax_fed"], 2),
+            "ytd_tax_prov": round(ytd["tax_prov"], 2),
+            "ytd_other_d": round(ytd["other_d"], 2),
+            "ytd_reimb": round(ytd["reimb"], 2),
+            "ytd_net": round(ytd["net"], 2),
+            "ytd_regular_pay": round(ytd["regular_pay"], 2),
+            "ytd_stat_pay": round(ytd["stat_pay"], 2),
+            "ytd_sick_pay": round(ytd["sick_pay"], 2),
+            "ytd_vacation_pay": round(ytd["vacation_pay"], 2),
+            "ytd_overtime_pay": round(ytd["overtime_pay"], 2),
+            "ytd_vac_accrual": round(ytd["vac_accrual"], 2),
+            "ytd_vac_paid": round(ytd["vacation_pay"], 2),
+            "status": "Calculated",
+        }
+    )
+    return row
+
+
+def export_payroll_register(register: pd.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        register.to_excel(writer, sheet_name="Payroll", index=False)
+        summary = (
+            register.groupby("employee_id", dropna=False)[["gross", "cpp", "ei", "tax_fed", "tax_prov", "net"]]
+            .sum(numeric_only=True)
+            .reset_index()
+        )
+        summary.to_excel(writer, sheet_name="Payroll Summary", index=False)
+        for sheet_name, df in {"Payroll": register, "Payroll Summary": summary}.items():
+            extractor.auto_adjust_columns(writer, sheet_name, df)
+    return buffer.getvalue()
 
 
 def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) -> bytes:
@@ -521,7 +686,21 @@ with annual_tab:
 
 with payroll_tab:
     st.subheader("Payroll calculator")
-    st.caption("Enter one pay period, review deductions, then download a payslip PDF.")
+    st.caption("Enter one pay period, then download a payslip PDF and updated payroll register.")
+
+    register_file = st.file_uploader(
+        "Upload existing payroll register Excel",
+        type=["xlsx"],
+        key="payroll-register",
+        help="Optional. If omitted, a new register will be created.",
+    )
+    try:
+        payroll_register = load_payroll_register(register_file)
+        if register_file is not None:
+            st.success(f"Loaded {len(payroll_register)} existing payroll row(s).")
+    except Exception as exc:
+        st.error(str(exc))
+        payroll_register = pd.DataFrame(columns=PAYROLL_COLUMNS)
 
     with st.form("payroll-form"):
         st.markdown("**Company**")
@@ -553,6 +732,10 @@ with payroll_tab:
         vacation_pay = earn_cols2[1].number_input("Vacation pay paid", min_value=0.0, value=0.0, step=10.0)
         bonus = earn_cols2[2].number_input("Bonus/other taxable pay", min_value=0.0, value=0.0, step=10.0)
         reimbursements = earn_cols2[3].number_input("Reimbursements", min_value=0.0, value=0.0, step=10.0)
+        earn_cols3 = st.columns(3)
+        salary_amount = earn_cols3[0].number_input("Salary amount", min_value=0.0, value=0.0, step=10.0)
+        sick_pay = earn_cols3[1].number_input("Sick pay", min_value=0.0, value=0.0, step=10.0)
+        vac_accrual = earn_cols3[2].number_input("Vacation accrual", min_value=0.0, value=0.0, step=10.0)
 
         st.markdown("**Year-to-date caps**")
         ytd_cols = st.columns(3)
@@ -569,18 +752,31 @@ with payroll_tab:
             "frequency": frequency,
             "hours": hours,
             "rate": rate,
+            "employee_id": employee_id,
+            "pay_start": pay_start,
+            "pay_end": pay_end,
+            "pay_date": pay_date,
+            "salary_amount": salary_amount,
             "overtime_hours": overtime_hours,
             "overtime_rate": overtime_rate,
             "stat_pay": stat_pay,
+            "sick_pay": sick_pay,
             "vacation_pay": vacation_pay,
+            "vac_accrual": vac_accrual,
             "bonus": bonus,
             "reimbursements": reimbursements,
             "other_deductions": other_deductions,
-            "ytd_cpp": ytd_cpp,
-            "ytd_cpp2": ytd_cpp2,
-            "ytd_ei": ytd_ei,
         }
+        ytd_before = payroll_ytd_before(payroll_register, employee_id)
+        payroll_input["ytd_cpp"] = ytd_before["cpp"] + ytd_cpp
+        payroll_input["ytd_cpp2"] = ytd_cpp2
+        payroll_input["ytd_ei"] = ytd_before["ei"] + ytd_ei
         calc = calculate_payroll(payroll_input)
+        register_row = make_payroll_register_row(payroll_input, calc, ytd_before)
+        updated_register = pd.concat(
+            [payroll_register, pd.DataFrame([register_row], columns=PAYROLL_COLUMNS)],
+            ignore_index=True,
+        )
         st.session_state["payroll_calc"] = {
             "company": {"name": company_name, "address": company_address},
             "employee": {"name": employee_name or "Employee", "id": employee_id, "position": position},
@@ -591,6 +787,7 @@ with payroll_tab:
                 "pay_date": pay_date,
             },
             "calc": calc,
+            "updated_register": updated_register,
         }
 
     saved = st.session_state.get("payroll_calc")
@@ -606,7 +803,9 @@ with payroll_tab:
         result_df = pd.DataFrame(
             [
                 {"Item": "Regular pay", "Amount": calc["regular_pay"]},
+                {"Item": "Salary amount", "Amount": saved["payroll"]["salary_amount"]},
                 {"Item": "Overtime pay", "Amount": calc["overtime_pay"]},
+                {"Item": "Sick pay", "Amount": saved["payroll"]["sick_pay"]},
                 {"Item": "Gross pay", "Amount": calc["gross"]},
                 {"Item": "CPP", "Amount": -calc["cpp"]},
                 {"Item": "EI", "Amount": -calc["ei"]},
@@ -638,6 +837,15 @@ with payroll_tab:
             mime="application/pdf",
             type="primary",
         )
+        register_bytes = export_payroll_register(saved["updated_register"])
+        st.download_button(
+            "Download updated payroll register",
+            data=register_bytes,
+            file_name="Payroll_Register_Updated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        with st.expander("Preview payroll register row"):
+            st.dataframe(saved["updated_register"].tail(1), use_container_width=True, hide_index=True)
         st.warning("Payroll calculations should be reviewed against CRA PDOC before remitting or filing.")
 
 with guide_tab:
