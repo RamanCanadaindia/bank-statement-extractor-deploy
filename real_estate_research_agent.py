@@ -150,6 +150,12 @@ class RealtorSavedSearchProvider:
 
 def realtor_map_params(search_url: str) -> dict[str, str]:
     parsed = urlparse(search_url)
+    if "/real-estate/" in parsed.path.lower():
+        raise ValueError(
+            "This is a single Realtor.ca property page. Paste a Realtor.ca map search URL instead: "
+            "open Realtor.ca map view, set your area/filters, then copy the URL that starts with "
+            "https://www.realtor.ca/map# and contains LatitudeMax, LatitudeMin, LongitudeMax, and LongitudeMin."
+        )
     fragment = parsed.fragment or ""
     if fragment.startswith("/"):
         fragment = fragment[1:]
@@ -157,7 +163,11 @@ def realtor_map_params(search_url: str) -> dict[str, str]:
         fragment = fragment.split("?", 1)[1]
     values = {k: unquote(v[-1]) for k, v in parse_qs(fragment).items() if v}
     if not values:
-        raise ValueError("The Realtor.ca URL did not contain map search parameters.")
+        raise ValueError(
+            "The Realtor.ca URL did not contain map search parameters. Paste the map search URL, not an individual "
+            "property page. A valid URL starts with https://www.realtor.ca/map# and includes LatitudeMax, "
+            "LatitudeMin, LongitudeMax, and LongitudeMin."
+        )
     required = ["LatitudeMax", "LongitudeMax", "LatitudeMin", "LongitudeMin"]
     missing = [key for key in required if key not in values]
     if missing:

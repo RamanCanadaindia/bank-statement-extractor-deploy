@@ -916,6 +916,10 @@ with payroll_tab:
 with real_estate_tab:
     st.subheader("Real Estate Investment Agent")
     st.caption("Paste a Realtor.ca map search URL, run the search, then review ranked investment opportunities.")
+    st.info(
+        "Use the Realtor.ca map-search link, not a single property page. "
+        "The URL should start with https://www.realtor.ca/map# and include LatitudeMax / LatitudeMin."
+    )
 
     realtor_url = st.text_area("Realtor.ca map search URL", value=DEFAULT_REALTOR_URL, height=110)
 
@@ -932,6 +936,11 @@ with real_estate_tab:
     if st.button("Run real estate search", type="primary", use_container_width=True):
         if not realtor_url.strip():
             st.error("Paste a Realtor.ca map URL first.")
+        elif "/real-estate/" in realtor_url.lower():
+            st.error(
+                "That is a single property link. Open Realtor.ca map view, apply your filters, "
+                "then copy the map URL from the address bar."
+            )
         else:
             try:
                 with st.spinner("Searching Realtor.ca and ranking properties..."):
