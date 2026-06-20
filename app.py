@@ -599,13 +599,32 @@ def real_estate_excel_bytes(tables: dict[str, pd.DataFrame]) -> bytes:
     return buffer.getvalue()
 
 
-def run_real_estate_search(realtor_url: str, zealty_file, rental_file, signal_file) -> tuple[pd.DataFrame, pd.DataFrame]:
+def uploaded_csv_temp(uploaded_file) -> Path | None:
+    if uploaded_file is None:
+        return None
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
+    temp.write(uploaded_file.getvalue())
+    temp.close()
+    return Path(temp.name)
+
+
+def run_real_estate_search(
+    realtor_url: str,
+    realtor_csv_file,
+    zealty_file,
+    rental_file,
+    signal_file,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    realtor_csv_path = uploaded_csv_temp(realtor_csv_file)
     zealty_path = uploaded_json_temp(zealty_file)
     rental_path = uploaded_json_temp(rental_file)
     signal_path = uploaded_json_temp(signal_file)
 
     assumptions = real_estate.Assumptions()
-    realtor = real_estate.RealtorSavedSearchProvider(search_url=realtor_url)
+    realtor = real_estate.RealtorSavedSearchProvider(
+        csv_path=realtor_csv_path,
+        search_url=None if realtor_csv_path else realtor_url,
+    )
     zealty = real_estate.ZealtyProvider(zealty_path)
     rentals = real_estate.RentalProvider(rental_path)
     signals = real_estate.SignalProvider(signal_path)
@@ -918,10 +937,16 @@ with real_estate_tab:
     st.caption("Paste a Realtor.ca map search URL, run the search, then review ranked investment opportunities.")
     st.info(
         "Use the Realtor.ca map-search link, not a single property page. "
-        "The URL should start with https://www.realtor.ca/map# and include LatitudeMax / LatitudeMin."
+        "The URL should start with https://www.realtor.ca/map# and include LatitudeMax / LatitudeMin. "
+        "If Realtor.ca blocks the live search, upload a Realtor.ca CSV export below."
     )
 
     realtor_url = st.text_area("Realtor.ca map search URL", value=DEFAULT_REALTOR_URL, height=110)
+    realtor_csv_file = st.file_uploader(
+        "Realtor.ca CSV fallback",
+        type=["csv"],
+        help="Use this when Realtor.ca blocks the live map request. Columns should include Address, City, MLS Number, List Price, bedrooms, bathrooms, square feet, etc.",
+    )
 
     with st.expander("Optional enrichment files"):
         enrich_cols = st.columns(3)
@@ -934,9 +959,9 @@ with real_estate_tab:
         )
 
     if st.button("Run real estate search", type="primary", use_container_width=True):
-        if not realtor_url.strip():
-            st.error("Paste a Realtor.ca map URL first.")
-        elif "/real-estate/" in realtor_url.lower():
+        if not realtor_url.strip() and realtor_csv_file is None:
+            st.error("Paste a Realtor.ca map URL or upload a Realtor.ca CSV first.")
+        elif realtor_csv_file is None and "/real-estate/" in realtor_url.lower():
             st.error(
                 "That is a single property link. Open Realtor.ca map view, apply your filters, "
                 "then copy the map URL from the address bar."
@@ -946,6 +971,7 @@ with real_estate_tab:
                 with st.spinner("Searching Realtor.ca and ranking properties..."):
                     property_df, top_df = run_real_estate_search(
                         realtor_url.strip(),
+                        realtor_csv_file,
                         zealty_file,
                         rental_file,
                         signal_file,

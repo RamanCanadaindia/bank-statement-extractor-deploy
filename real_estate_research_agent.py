@@ -222,8 +222,8 @@ def realtor_post(payload: dict[str, str], referer: str) -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         raise RuntimeError(
-            "Realtor.ca blocked or failed the map-search request. "
-            "Use --realtor-csv for now, or run from an authenticated/browser-backed session."
+            "Realtor.ca blocked the live map-search request. Upload a Realtor.ca CSV export in the app "
+            "and run the search again, or retry the map URL later."
         ) from exc
 
 
