@@ -71,6 +71,7 @@ require_password()
 
 
 SUPPORTED_BANKS = ["Auto-detect", "BMO", "CIBC", "RBC", "Tangerine", "Vancity", "TD", "Other bank"]
+DEFAULT_PAYROLL_TEMPLATE_URL = "https://docs.google.com/spreadsheets/d/1nv4k-mRjNQ_2U5uuMS8z26ZQWHMyuILR1cndIAgs0mk/copy"
 
 
 def get_payroll_template_url() -> str:
@@ -79,9 +80,9 @@ def get_payroll_template_url() -> str:
     if value:
         return value
     try:
-        return str(st.secrets.get("PAYROLL_TEMPLATE_URL", ""))
+        return str(st.secrets.get("PAYROLL_TEMPLATE_URL", DEFAULT_PAYROLL_TEMPLATE_URL))
     except FileNotFoundError:
-        return ""
+        return DEFAULT_PAYROLL_TEMPLATE_URL
 
 
 def safe_name(value: str) -> str:
@@ -374,7 +375,7 @@ with payroll_tab:
     st.caption("You own the master template. Each user makes a private copy in their own Google Drive.")
     payroll_template_url = get_payroll_template_url()
     if payroll_template_url:
-        st.link_button("Open payroll template", payroll_template_url, type="primary")
+        st.link_button("Make a private payroll copy", payroll_template_url, type="primary")
     else:
         st.info(
             "Payroll template link is not configured yet. Add PAYROLL_TEMPLATE_URL "
