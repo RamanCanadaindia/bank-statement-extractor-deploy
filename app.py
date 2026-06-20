@@ -20,8 +20,10 @@ APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 
 import bmo_docling_to_excel as extractor
+import real_estate_research_agent as real_estate
 
 importlib.reload(extractor)
+importlib.reload(real_estate)
 
 
 st.set_page_config(
@@ -562,13 +564,76 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
     return buffer.getvalue()
 
 
+DEFAULT_REALTOR_URL = (
+    "https://www.realtor.ca/map#ZoomLevel=15&Center=49.158114%2C-122.846239"
+    "&LatitudeMax=49.16707&LongitudeMax=-122.81311&LatitudeMin=49.14916"
+    "&LongitudeMin=-122.87937&Sort=6-D&PropertyTypeGroupID=1"
+    "&TransactionTypeId=2&PropertySearchTypeId=1&OwnershipTypeGroupId=1&Currency=CAD"
+)
+
+
+def uploaded_json_temp(uploaded_file) -> Path | None:
+    if uploaded_file is None:
+        return None
+    payload = uploaded_file.getvalue()
+    json.loads(payload.decode("utf-8"))
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+    temp.write(payload)
+    temp.close()
+    return Path(temp.name)
+
+
+def real_estate_public_rows(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([{key: value for key, value in row.items() if not key.startswith("_")} for row in rows])
+
+
+def real_estate_excel_bytes(tables: dict[str, pd.DataFrame]) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for sheet_name, df in tables.items():
+            df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+            worksheet = writer.sheets[sheet_name[:31]]
+            for column_cells in worksheet.columns:
+                width = max(len(str(cell.value or "")) for cell in column_cells)
+                worksheet.column_dimensions[column_cells[0].column_letter].width = min(max(width + 2, 10), 44)
+    return buffer.getvalue()
+
+
+def run_real_estate_search(realtor_url: str, zealty_file, rental_file, signal_file) -> tuple[pd.DataFrame, pd.DataFrame]:
+    zealty_path = uploaded_json_temp(zealty_file)
+    rental_path = uploaded_json_temp(rental_file)
+    signal_path = uploaded_json_temp(signal_file)
+
+    assumptions = real_estate.Assumptions()
+    realtor = real_estate.RealtorSavedSearchProvider(search_url=realtor_url)
+    zealty = real_estate.ZealtyProvider(zealty_path)
+    rentals = real_estate.RentalProvider(rental_path)
+    signals = real_estate.SignalProvider(signal_path)
+
+    rows = []
+    for listing in realtor.fetch():
+        rows.append(
+            real_estate.score_property(
+                listing,
+                zealty.fetch(listing),
+                rentals.fetch(listing),
+                signals.fetch(listing),
+                assumptions,
+            )
+        )
+
+    df = real_estate_public_rows(rows)
+    top = df.sort_values("Investment Score", ascending=False).head(10) if not df.empty else df
+    return df, top
+
+
 st.title("Raman Financial Services")
 st.subheader("Bank Statement Extractor")
 st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
 st.caption("Convert bank statements into reviewable Excel transactions, then combine monthly files into an annual workbook.")
 
-extract_tab, annual_tab, payroll_tab, guide_tab = st.tabs(
-    ["Extract statements", "Build annual file", "Payroll template", "Guide"]
+extract_tab, annual_tab, payroll_tab, real_estate_tab, guide_tab = st.tabs(
+    ["Extract statements", "Build annual file", "Payroll template", "Real Estate Agent", "Guide"]
 )
 
 with extract_tab:
@@ -847,6 +912,92 @@ with payroll_tab:
         with st.expander("Preview payroll register row"):
             st.dataframe(saved["updated_register"].tail(1), use_container_width=True, hide_index=True)
         st.warning("Payroll calculations should be reviewed against CRA PDOC before remitting or filing.")
+
+with real_estate_tab:
+    st.subheader("Real Estate Investment Agent")
+    st.caption("Paste a Realtor.ca map search URL, run the search, then review ranked investment opportunities.")
+
+    realtor_url = st.text_area("Realtor.ca map search URL", value=DEFAULT_REALTOR_URL, height=110)
+
+    with st.expander("Optional enrichment files"):
+        enrich_cols = st.columns(3)
+        zealty_file = enrich_cols[0].file_uploader("Zealty JSON", type=["json"], key="zealty-json")
+        rental_file = enrich_cols[1].file_uploader("Rental JSON", type=["json"], key="rental-json")
+        signal_file = enrich_cols[2].file_uploader(
+            "Transit / school / development JSON",
+            type=["json"],
+            key="signal-json",
+        )
+
+    if st.button("Run real estate search", type="primary", use_container_width=True):
+        if not realtor_url.strip():
+            st.error("Paste a Realtor.ca map URL first.")
+        else:
+            try:
+                with st.spinner("Searching Realtor.ca and ranking properties..."):
+                    property_df, top_df = run_real_estate_search(
+                        realtor_url.strip(),
+                        zealty_file,
+                        rental_file,
+                        signal_file,
+                    )
+                st.session_state["real_estate_property_df"] = property_df
+                st.session_state["real_estate_top_df"] = top_df
+            except Exception as exc:
+                st.error(str(exc))
+
+    property_df = st.session_state.get("real_estate_property_df")
+    top_df = st.session_state.get("real_estate_top_df")
+
+    if isinstance(property_df, pd.DataFrame) and not property_df.empty:
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("Listings", f"{len(property_df):,}")
+        metric_cols[1].metric("Average list price", f"${property_df['List Price'].mean():,.0f}")
+        price_sqft = pd.to_numeric(property_df["Price / Sq Ft"], errors="coerce").dropna()
+        metric_cols[2].metric("Median price / sq ft", f"${price_sqft.median():,.0f}" if not price_sqft.empty else "Pending")
+        metric_cols[3].metric("Top score", f"{top_df['Investment Score'].max():.0f}" if not top_df.empty else "Pending")
+
+        st.markdown("**Top 10 Investment Opportunities**")
+        top_columns = [
+            "Address",
+            "City",
+            "List Price",
+            "1-Year Change %",
+            "5-Year Change %",
+            "Estimated Rent",
+            "Estimated Cash Flow",
+            "Investment Score",
+            "Flags",
+            "Notes",
+        ]
+        visible_top_columns = [column for column in top_columns if column in top_df.columns]
+        st.dataframe(top_df[visible_top_columns], use_container_width=True, hide_index=True)
+
+        st.markdown("**Property Database**")
+        st.dataframe(property_df, use_container_width=True, hide_index=True)
+
+        download_cols = st.columns(2)
+        download_cols[0].download_button(
+            "Download property CSV",
+            data=property_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="property_database_rows.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        download_cols[1].download_button(
+            "Download Excel workbook",
+            data=real_estate_excel_bytes(
+                {
+                    "Property Database": property_df,
+                    "Top 10 Opportunities": top_df,
+                }
+            ),
+            file_name="property_database.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    else:
+        st.info("Run a Realtor.ca search to populate the property database.")
 
 with guide_tab:
     st.subheader("Recommended file names")
