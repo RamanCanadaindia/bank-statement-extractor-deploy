@@ -10,6 +10,9 @@ import math
 import os
 from pathlib import Path
 from typing import Any
+from http.cookiejar import CookieJar
+from urllib.error import HTTPError
+from urllib.request import HTTPCookieProcessor, build_opener
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -204,6 +207,17 @@ def realtor_payload(params: dict[str, str], page: int) -> dict[str, str]:
 
 def realtor_post(payload: dict[str, str], referer: str) -> dict[str, Any]:
     body = urlencode(payload).encode("utf-8")
+    cookie_jar = CookieJar()
+    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    warmup_request = Request(
+        "https://www.realtor.ca/",
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-CA,en;q=0.9",
+        },
+    )
     request = Request(
         REALTOR_MAP_SEARCH_URL,
         data=body,
@@ -214,11 +228,17 @@ def realtor_post(payload: dict[str, str], referer: str) -> dict[str, Any]:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
             "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language": "en-CA,en;q=0.9",
+            "X-Requested-With": "XMLHttpRequest",
         },
         method="POST",
     )
     try:
-        with urlopen(request, timeout=30) as response:
+        try:
+            opener.open(warmup_request, timeout=20).close()
+        except HTTPError:
+            pass
+        with opener.open(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         raise RuntimeError(
