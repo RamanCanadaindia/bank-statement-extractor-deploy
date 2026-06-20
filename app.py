@@ -572,12 +572,30 @@ DEFAULT_REALTOR_URL = (
 )
 
 
-def uploaded_json_temp(uploaded_file) -> Path | None:
+ZEALTY_TEMPLATE_COLUMNS = [
+    "MLS Number",
+    "Address",
+    "Sold Price History",
+    "Sale Dates",
+    "Price 1Y Ago",
+    "Price 3Y Ago",
+    "Price 5Y Ago",
+    "Previous Listing Prices",
+    "Price Change History",
+    "Days on Market",
+    "Zealty URL",
+    "Source Notes",
+]
+
+
+def uploaded_enrichment_temp(uploaded_file) -> Path | None:
     if uploaded_file is None:
         return None
     payload = uploaded_file.getvalue()
-    json.loads(payload.decode("utf-8"))
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+    suffix = Path(uploaded_file.name).suffix.lower() or ".json"
+    if suffix == ".json":
+        json.loads(payload.decode("utf-8"))
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     temp.write(payload)
     temp.close()
     return Path(temp.name)
@@ -616,9 +634,9 @@ def run_real_estate_search(
     signal_file,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     realtor_csv_path = uploaded_csv_temp(realtor_csv_file)
-    zealty_path = uploaded_json_temp(zealty_file)
-    rental_path = uploaded_json_temp(rental_file)
-    signal_path = uploaded_json_temp(signal_file)
+    zealty_path = uploaded_enrichment_temp(zealty_file)
+    rental_path = uploaded_enrichment_temp(rental_file)
+    signal_path = uploaded_enrichment_temp(signal_file)
 
     assumptions = real_estate.Assumptions()
     realtor = real_estate.RealtorSavedSearchProvider(
@@ -949,13 +967,20 @@ with real_estate_tab:
     )
 
     with st.expander("Optional enrichment files"):
+        st.caption("Use Zealty CSV/JSON for sold history, sale dates, previous prices, price changes, days on market, and comparable-sales notes.")
         enrich_cols = st.columns(3)
-        zealty_file = enrich_cols[0].file_uploader("Zealty JSON", type=["json"], key="zealty-json")
-        rental_file = enrich_cols[1].file_uploader("Rental JSON", type=["json"], key="rental-json")
+        zealty_file = enrich_cols[0].file_uploader("Zealty CSV / JSON", type=["csv", "json"], key="zealty-json")
+        rental_file = enrich_cols[1].file_uploader("Rental CSV / JSON", type=["csv", "json"], key="rental-json")
         signal_file = enrich_cols[2].file_uploader(
-            "Transit / school / development JSON",
-            type=["json"],
+            "Transit / school / development CSV / JSON",
+            type=["csv", "json"],
             key="signal-json",
+        )
+        st.download_button(
+            "Download Zealty CSV template",
+            data=pd.DataFrame(columns=ZEALTY_TEMPLATE_COLUMNS).to_csv(index=False).encode("utf-8-sig"),
+            file_name="zealty_enrichment_template.csv",
+            mime="text/csv",
         )
 
     if st.button("Run real estate search", type="primary", use_container_width=True):

@@ -374,10 +374,13 @@ class SignalProvider:
         return LocationSignals(notes="Pending transit/school/development data connection")
 
 
-def load_lookup(json_path: Path | None) -> dict[str, dict[str, Any]]:
-    if not json_path:
+def load_lookup(data_path: Path | None) -> dict[str, dict[str, Any]]:
+    if not data_path:
         return {}
-    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    if data_path.suffix.lower() == ".csv":
+        with data_path.open("r", encoding="utf-8-sig", newline="") as f:
+            return index_records(list(csv.DictReader(f)))
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
     if isinstance(payload, dict):
         records = payload.get("records", payload)
         if isinstance(records, dict):
@@ -386,7 +389,7 @@ def load_lookup(json_path: Path | None) -> dict[str, dict[str, Any]]:
             return index_records(records)
     if isinstance(payload, list):
         return index_records(payload)
-    raise ValueError(f"Unsupported lookup JSON shape: {json_path}")
+    raise ValueError(f"Unsupported enrichment file shape: {data_path}")
 
 
 def index_records(records: list[Any]) -> dict[str, dict[str, Any]]:
