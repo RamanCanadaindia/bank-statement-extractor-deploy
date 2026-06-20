@@ -73,6 +73,17 @@ require_password()
 SUPPORTED_BANKS = ["Auto-detect", "BMO", "CIBC", "RBC", "Tangerine", "Vancity", "TD", "Other bank"]
 
 
+def get_payroll_template_url() -> str:
+    """Read the master payroll template link without hard-coding it in public code."""
+    value = os.environ.get("PAYROLL_TEMPLATE_URL", "")
+    if value:
+        return value
+    try:
+        return str(st.secrets.get("PAYROLL_TEMPLATE_URL", ""))
+    except FileNotFoundError:
+        return ""
+
+
 def safe_name(value: str) -> str:
     return "".join(char if char.isalnum() or char in "-_. " else "_" for char in value).strip()
 
@@ -241,7 +252,9 @@ st.subheader("Bank Statement Extractor")
 st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
 st.caption("Convert bank statements into reviewable Excel transactions, then combine monthly files into an annual workbook.")
 
-extract_tab, annual_tab, guide_tab = st.tabs(["Extract statements", "Build annual file", "Guide"])
+extract_tab, annual_tab, payroll_tab, guide_tab = st.tabs(
+    ["Extract statements", "Build annual file", "Payroll template", "Guide"]
+)
 
 with extract_tab:
     left, right = st.columns([1, 2])
@@ -355,6 +368,31 @@ with annual_tab:
                     st.dataframe(transactions, use_container_width=True, hide_index=True)
             except Exception as exc:
                 st.error(str(exc))
+
+with payroll_tab:
+    st.subheader("Payroll template")
+    st.caption("You own the master template. Each user makes a private copy in their own Google Drive.")
+    payroll_template_url = get_payroll_template_url()
+    if payroll_template_url:
+        st.link_button("Open payroll template", payroll_template_url, type="primary")
+    else:
+        st.info(
+            "Payroll template link is not configured yet. Add PAYROLL_TEMPLATE_URL "
+            "in Streamlit secrets after the master Google Sheet template is ready."
+        )
+
+    st.markdown(
+        "1. Open the master payroll template.\n"
+        "2. Click File > Make a copy.\n"
+        "3. Save the copy in the user's own Google Drive.\n"
+        "4. Fill Employees and Payroll tabs in that private copy.\n"
+        "5. Use the Payroll menu inside Google Sheets to generate payslips and reports."
+    )
+    st.warning(
+        "Privacy model: users own their copied sheet and payroll data. Raman Financial Services "
+        "owns the master template and website, but copied payroll records stay in the user's Drive "
+        "unless they share access."
+    )
 
 with guide_tab:
     st.subheader("Recommended file names")
