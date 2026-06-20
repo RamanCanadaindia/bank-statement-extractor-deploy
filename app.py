@@ -565,10 +565,10 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
 
 
 DEFAULT_REALTOR_URL = (
-    "https://www.realtor.ca/map#ZoomLevel=15&Center=49.158114%2C-122.846239"
-    "&LatitudeMax=49.16707&LongitudeMax=-122.81311&LatitudeMin=49.14916"
-    "&LongitudeMin=-122.87937&Sort=6-D&PropertyTypeGroupID=1"
-    "&TransactionTypeId=2&PropertySearchTypeId=1&OwnershipTypeGroupId=1&Currency=CAD"
+    "https://www.realtor.ca/map#ZoomLevel=15&Center=49.158069%2C-122.846350"
+    "&LatitudeMax=49.16716&LongitudeMax=-122.81300&LatitudeMin=49.14897"
+    "&LongitudeMin=-122.87970&Sort=6-D&PropertyTypeGroupID=1"
+    "&TransactionTypeId=2&PropertySearchTypeId=0&Currency=CAD"
 )
 
 
