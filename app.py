@@ -629,6 +629,7 @@ def uploaded_csv_temp(uploaded_file) -> Path | None:
 def run_real_estate_search(
     realtor_url: str,
     realtor_csv_file,
+    zealty_url: str,
     zealty_file,
     rental_file,
     signal_file,
@@ -643,7 +644,7 @@ def run_real_estate_search(
         csv_path=realtor_csv_path,
         search_url=None if realtor_csv_path else realtor_url,
     )
-    zealty = real_estate.ZealtyProvider(zealty_path)
+    zealty = real_estate.ZealtyProvider(zealty_path, zealty_url)
     rentals = real_estate.RentalProvider(rental_path)
     signals = real_estate.SignalProvider(signal_path)
 
@@ -968,6 +969,12 @@ with real_estate_tab:
 
     with st.expander("Optional enrichment files"):
         st.caption("Use Zealty CSV/JSON for sold history, sale dates, previous prices, price changes, days on market, and comparable-sales notes.")
+        zealty_url = st.text_input(
+            "Zealty URL",
+            value="",
+            placeholder="Paste Zealty search or property URL here",
+            help="This saves the Zealty source link in the output. Upload Zealty CSV/JSON to populate sold history and comparable-sale fields.",
+        )
         enrich_cols = st.columns(3)
         zealty_file = enrich_cols[0].file_uploader("Zealty CSV / JSON", type=["csv", "json"], key="zealty-json")
         rental_file = enrich_cols[1].file_uploader("Rental CSV / JSON", type=["csv", "json"], key="rental-json")
@@ -997,6 +1004,7 @@ with real_estate_tab:
                     property_df, top_df = run_real_estate_search(
                         realtor_url.strip(),
                         realtor_csv_file,
+                        zealty_url.strip(),
                         zealty_file,
                         rental_file,
                         signal_file,

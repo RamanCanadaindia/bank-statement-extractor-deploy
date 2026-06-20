@@ -315,8 +315,9 @@ def parse_sqft(value: Any) -> float | None:
 
 
 class ZealtyProvider:
-    def __init__(self, json_path: Path | None = None) -> None:
+    def __init__(self, json_path: Path | None = None, source_url: str = "") -> None:
         self.records = load_lookup(json_path)
+        self.source_url = clean(source_url)
 
     def fetch(self, listing: PropertyListing) -> ZealtyRecord:
         record = lookup_record(self.records, listing)
@@ -337,7 +338,15 @@ class ZealtyProvider:
             )
         # TODO: Connect with an authenticated Zealty search workflow.
         # Keep this provider isolated because Zealty access often depends on a logged-in browser session.
-        return ZealtyRecord(source_notes="Pending Zealty login/search connection")
+        return ZealtyRecord(
+            source_url=self.source_url,
+            source_notes=(
+                "Zealty URL provided; upload Zealty CSV/JSON to populate sold history, price changes, "
+                "days on market, and comparable sales."
+                if self.source_url
+                else "Pending Zealty login/search connection"
+            ),
+        )
 
 
 class RentalProvider:
