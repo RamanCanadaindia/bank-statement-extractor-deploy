@@ -964,6 +964,8 @@ with real_estate_tab:
             """
             **Quick start**
 
+            This tool helps you quickly find better investment opportunities without manually comparing every listing.
+
             1. Paste a Realtor.ca **map** URL, then click **Run real estate search**.
             2. If Realtor.ca blocks the live search, upload a CSV under **Realtor.ca CSV fallback / combined CSV** and run again.
             3. For the cleanest workflow, upload one combined CSV that has both Realtor.ca listing columns and Zealty columns.
