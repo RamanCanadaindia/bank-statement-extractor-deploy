@@ -564,30 +564,6 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
     return buffer.getvalue()
 
 
-DEFAULT_REALTOR_URL = (
-    "https://www.realtor.ca/map#ZoomLevel=15&Center=49.158069%2C-122.846350"
-    "&LatitudeMax=49.16716&LongitudeMax=-122.81300&LatitudeMin=49.14897"
-    "&LongitudeMin=-122.87970&Sort=6-D&PropertyTypeGroupID=1"
-    "&TransactionTypeId=2&PropertySearchTypeId=0&Currency=CAD"
-)
-
-
-ZEALTY_TEMPLATE_COLUMNS = [
-    "MLS Number",
-    "Address",
-    "Sold Price History",
-    "Sale Dates",
-    "Price 1Y Ago",
-    "Price 3Y Ago",
-    "Price 5Y Ago",
-    "Previous Listing Prices",
-    "Price Change History",
-    "Days on Market",
-    "Zealty URL",
-    "Source Notes",
-]
-
-
 def uploaded_enrichment_temp(uploaded_file) -> Path | None:
     if uploaded_file is None:
         return None
@@ -953,11 +929,10 @@ with payroll_tab:
 
 with real_estate_tab:
     st.subheader("Real Estate Investment Agent")
-    st.caption("Paste a Realtor.ca map search URL, run the search, then review ranked investment opportunities.")
+    st.caption("Upload a combined CSV, run the search, then review ranked investment opportunities.")
     st.info(
-        "Use the Realtor.ca map-search link, not a single property page. "
-        "The URL should start with https://www.realtor.ca/map# and include LatitudeMax / LatitudeMin. "
-        "If Realtor.ca blocks the live search, upload a Realtor.ca CSV export below."
+        "Use one combined CSV with Realtor.ca listing columns. If available, include Zealty columns in the same file "
+        "for richer scoring."
     )
     with st.expander("Real estate agent guide"):
         st.markdown(
@@ -966,9 +941,9 @@ with real_estate_tab:
 
             This tool helps you quickly find better investment opportunities without manually comparing every listing.
 
-            1. Paste a Realtor.ca **map** URL, then click **Run real estate search**.
-            2. If Realtor.ca blocks the live search, upload a CSV under **Realtor.ca CSV fallback / combined CSV** and run again.
-            3. For the cleanest workflow, upload one combined CSV that has both Realtor.ca listing columns and Zealty columns.
+            1. Upload one combined CSV under **Combined property CSV**.
+            2. Click **Run real estate search**.
+            3. Review the Top 10 and Property Database tables.
 
             **Best one-file workflow**
 
@@ -978,12 +953,7 @@ with real_estate_tab:
             - Zealty enrichment columns: sold price history, sale dates, price 1Y/3Y/5Y ago, previous listing prices,
               price change history, days on market, Zealty URL
 
-            Upload this one rich combined file under **Realtor.ca CSV fallback / combined CSV**. You do not need to upload
-            a separate Zealty file if the Zealty columns are already inside the combined CSV.
-
-            **Do not paste**
-
-            - A single property URL like `https://www.realtor.ca/real-estate/...`
+            Upload this one rich combined file under **Combined property CSV**.
 
             **Score meaning**
 
@@ -1015,13 +985,11 @@ with real_estate_tab:
             """
         )
 
-    realtor_url = st.text_area("Realtor.ca map search URL", value=DEFAULT_REALTOR_URL, height=110)
     realtor_csv_file = st.file_uploader(
-        "Realtor.ca CSV fallback / combined CSV",
+        "Combined property CSV",
         type=["csv"],
         help=(
-            "Use this when Realtor.ca blocks the live map request. This can be a simple Realtor.ca CSV, "
-            "or one combined CSV that also includes Zealty columns such as Price 1Y Ago, Price 5Y Ago, "
+            "Upload a Realtor.ca listing CSV, or one combined CSV that also includes Zealty columns such as Price 1Y Ago, Price 5Y Ago, "
             "Price Change History, and Days on Market."
         ),
     )
@@ -1032,18 +1000,13 @@ with real_estate_tab:
     signal_file = None
 
     if st.button("Run real estate search", type="primary", use_container_width=True):
-        if not realtor_url.strip() and realtor_csv_file is None:
-            st.error("Paste a Realtor.ca map URL or upload a Realtor.ca CSV first.")
-        elif realtor_csv_file is None and "/real-estate/" in realtor_url.lower():
-            st.error(
-                "That is a single property link. Open Realtor.ca map view, apply your filters, "
-                "then copy the map URL from the address bar."
-            )
+        if realtor_csv_file is None:
+            st.error("Upload a combined property CSV first.")
         else:
             try:
                 with st.spinner("Searching Realtor.ca and ranking properties..."):
                     property_df, top_df = run_real_estate_search(
-                        realtor_url.strip(),
+                        "",
                         realtor_csv_file,
                         zealty_url.strip(),
                         zealty_file,
