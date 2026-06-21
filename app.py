@@ -941,7 +941,7 @@ with real_estate_tab:
 
             This tool helps you quickly find better investment opportunities without manually comparing every listing.
 
-            1. Upload one combined CSV under **Combined property CSV**.
+            1. Upload one combined CSV under **Zealty-enriched combined CSV**.
             2. Click **Run real estate search**.
             3. Review the Top 10 and Property Database tables.
 
@@ -953,7 +953,7 @@ with real_estate_tab:
             - Zealty enrichment columns: sold price history, sale dates, price 1Y/3Y/5Y ago, previous listing prices,
               price change history, days on market, Zealty URL
 
-            Upload this one rich combined file under **Combined property CSV**.
+            Upload this one rich combined file under **Zealty-enriched combined CSV**.
 
             **Score meaning**
 
@@ -986,7 +986,7 @@ with real_estate_tab:
         )
 
     realtor_csv_file = st.file_uploader(
-        "Combined property CSV",
+        "Zealty-enriched combined CSV",
         type=["csv"],
         help=(
             "Upload a Realtor.ca listing CSV, or one combined CSV that also includes Zealty columns such as Price 1Y Ago, Price 5Y Ago, "
@@ -1001,7 +1001,7 @@ with real_estate_tab:
 
     if st.button("Run real estate search", type="primary", use_container_width=True):
         if realtor_csv_file is None:
-            st.error("Upload a combined property CSV first.")
+            st.error("Upload a Zealty-enriched combined CSV first.")
         else:
             try:
                 with st.spinner("Searching Realtor.ca and ranking properties..."):
