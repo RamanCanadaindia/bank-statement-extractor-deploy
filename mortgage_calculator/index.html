@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maximum Mortgage Under GDSR</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="page-shell">
+    <section class="calculator-panel" aria-labelledby="calculator-title">
+      <div class="intro">
+        <p class="eyebrow">Surrey BC mortgage estimate</p>
+        <h1 id="calculator-title">Maximum Mortgage Under GDSR</h1>
+        <p class="intro-copy">
+          Estimate the maximum mortgage amount using gross debt service rules, qualifying rate, property tax, heating cost, and condo fees.
+        </p>
+      </div>
+
+      <form class="calculator-form" id="mortgage-form" novalidate>
+        <div class="error-box" id="error-box" role="alert" aria-live="polite" hidden></div>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>Gross annual income</span>
+            <div class="input-prefix">
+              <span>$</span>
+              <input type="number" id="income" min="0" step="1000" inputmode="decimal" placeholder="120000" required>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>GDSR percentage</span>
+            <div class="input-suffix">
+              <input type="number" id="gdsr" min="0" step="0.1" inputmode="decimal" value="39">
+              <span>%</span>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Annual property tax</span>
+            <div class="input-prefix">
+              <span>$</span>
+              <input type="number" id="property-tax" min="0" step="100" inputmode="decimal" placeholder="4200">
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Annual heating cost</span>
+            <div class="input-prefix">
+              <span>$</span>
+              <input type="number" id="heating-cost" min="0" step="100" inputmode="decimal" placeholder="1800">
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Monthly condo fee <small>optional</small></span>
+            <div class="input-prefix">
+              <span>$</span>
+              <input type="number" id="condo-fee" min="0" step="25" inputmode="decimal" placeholder="0">
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Contract mortgage rate</span>
+            <div class="input-suffix">
+              <input type="number" id="contract-rate" min="0" step="0.01" inputmode="decimal" placeholder="4.99">
+              <span>%</span>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Amortization years</span>
+            <input type="number" id="amortization" min="1" step="1" inputmode="numeric" value="25">
+          </label>
+
+          <label class="field">
+            <span>Down payment</span>
+            <div class="input-prefix">
+              <span>$</span>
+              <input type="number" id="down-payment" min="0" step="1000" inputmode="decimal" placeholder="100000">
+            </div>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit">Calculate affordability</button>
+          <button type="reset" class="secondary">Reset</button>
+        </div>
+      </form>
+    </section>
+
+    <aside class="results-panel" aria-labelledby="results-title">
+      <p class="eyebrow">Estimated result</p>
+      <h2 id="results-title">Your maximum mortgage</h2>
+
+      <div class="result-list">
+        <div class="result-item">
+          <span>Qualifying rate</span>
+          <strong id="qualifying-rate">-</strong>
+        </div>
+        <div class="result-item">
+          <span>Maximum monthly mortgage payment</span>
+          <strong id="monthly-payment">-</strong>
+        </div>
+        <div class="result-item highlight">
+          <span>Maximum mortgage loan</span>
+          <strong id="max-loan">-</strong>
+        </div>
+        <div class="result-item">
+          <span>Estimated purchase price</span>
+          <strong id="purchase-price">-</strong>
+        </div>
+      </div>
+
+      <p class="disclaimer">
+        For estimate only. Final approval depends on lender, credit, income documents, debts, property, and insurer/lender guidelines.
+      </p>
+    </aside>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

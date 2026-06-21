@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -911,13 +912,30 @@ def run_real_estate_search(
     return df, top
 
 
+def mortgage_calculator_html() -> str:
+    calculator_dir = APP_DIR / "mortgage_calculator"
+    html = (calculator_dir / "index.html").read_text(encoding="utf-8")
+    css = (calculator_dir / "style.css").read_text(encoding="utf-8")
+    js = (calculator_dir / "script.js").read_text(encoding="utf-8")
+    html = html.replace('<link rel="stylesheet" href="style.css">', f"<style>{css}</style>")
+    html = html.replace('<script src="script.js"></script>', f"<script>{js}</script>")
+    return html
+
+
 st.title("Raman Financial Services")
 st.subheader("Bank Statement Extractor")
 st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
 st.caption("Convert bank statements into reviewable Excel transactions, then combine monthly files into an annual workbook.")
 
-extract_tab, annual_tab, payroll_tab, real_estate_tab, guide_tab = st.tabs(
-    ["Extract statements", "Build annual file", "Payroll template", "Real Estate Agent", "Guide"]
+extract_tab, annual_tab, payroll_tab, mortgage_tab, real_estate_tab, guide_tab = st.tabs(
+    [
+        "Extract statements",
+        "Build annual file",
+        "Payroll template",
+        "Maximum Mortgage Under GDSR",
+        "Real Estate Agent",
+        "Guide",
+    ]
 )
 
 with extract_tab:
@@ -1282,6 +1300,11 @@ with payroll_tab:
         with st.expander("Preview payroll register row"):
             st.dataframe(saved["updated_register"].tail(1), use_container_width=True, hide_index=True)
         st.warning("Payroll calculations should be reviewed against CRA PDOC before remitting or filing.")
+
+with mortgage_tab:
+    st.subheader("Maximum Mortgage Under GDSR")
+    st.caption("Canadian mortgage affordability calculator using GDSR allowance, qualifying rate, property tax, heat, condo fees, amortization, and down payment.")
+    components.html(mortgage_calculator_html(), height=920, scrolling=True)
 
 with real_estate_tab:
     st.subheader("Real Estate Investment Agent")
