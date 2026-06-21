@@ -117,10 +117,13 @@ PAYROLL_COLUMNS = [
     "vacation_pay",
     "vac_accrual",
     "gross",
+    "taxable_pay",
+    "before_tax_d",
     "cpp",
     "ei",
     "tax_fed",
     "tax_prov",
+    "additional_tax",
     "other_d",
     "reimb",
     "net",
@@ -324,6 +327,8 @@ def calculate_payroll(values: dict) -> dict:
     periods = PAY_PERIODS[values["frequency"]]
     regular_pay = values["hours"] * values["rate"]
     overtime_pay = values["overtime_hours"] * values["overtime_rate"]
+    before_tax_deductions = values.get("before_tax_deductions", 0.0)
+    additional_tax = values.get("additional_tax", 0.0)
     gross = (
         regular_pay
         + values["salary_amount"]
@@ -334,34 +339,45 @@ def calculate_payroll(values: dict) -> dict:
         + values["bonus"]
     )
 
-    annualized_gross = gross * periods
+    taxable_pay = max(0.0, gross - before_tax_deductions)
+    annualized_gross = taxable_pay * periods
     cpp1_base = max(0.0, min(annualized_gross, CPP1_YMPE) - CPP_BASIC_EXEMPTION)
-    cpp1 = min(cpp1_base * CPP1_RATE / periods, max(0.0, (CPP1_YMPE - CPP_BASIC_EXEMPTION) * CPP1_RATE - values["ytd_cpp"]))
+    cpp1 = min(
+        cpp1_base * CPP1_RATE / periods,
+        max(0.0, (CPP1_YMPE - CPP_BASIC_EXEMPTION) * CPP1_RATE - values["ytd_cpp"]),
+    )
     cpp2_base = max(0.0, min(annualized_gross, CPP2_YAMPE) - CPP1_YMPE)
-    cpp2 = min(cpp2_base * CPP2_RATE / periods, max(0.0, (CPP2_YAMPE - CPP1_YMPE) * CPP2_RATE - values["ytd_cpp2"]))
-    cpp = round(max(0.0, cpp1 + cpp2), 2)
+    cpp2 = min(
+        cpp2_base * CPP2_RATE / periods,
+        max(0.0, (CPP2_YAMPE - CPP1_YMPE) * CPP2_RATE - values["ytd_cpp2"]),
+    )
+    cpp = 0.0 if values.get("cpp_exempt") else round(max(0.0, cpp1 + cpp2), 2)
 
     ei_max = EI_MIE * EI_RATE
-    ei = round(min(gross * EI_RATE, max(0.0, ei_max - values["ytd_ei"])), 2)
+    ei = 0.0 if values.get("ei_exempt") else round(min(taxable_pay * EI_RATE, max(0.0, ei_max - values["ytd_ei"])), 2)
 
     federal_annual = progressive_tax(annualized_gross, FED_BRACKETS_2026)
-    federal_credit = FED_BPA_2026 * 0.14
+    federal_credit = values.get("federal_claim_amount", FED_BPA_2026) * 0.14
     tax_fed = round(max(0.0, federal_annual - federal_credit) / periods, 2)
 
     bc_annual = progressive_tax(annualized_gross, BC_BRACKETS_2026)
-    bc_credit = BC_BPA_2026 * 0.0506
+    bc_credit = values.get("provincial_claim_amount", BC_BPA_2026) * 0.0506
     tax_prov = round(max(0.0, bc_annual - bc_credit) / periods, 2)
+    tax_fed = round(tax_fed + additional_tax, 2)
 
-    deductions = cpp + ei + tax_fed + tax_prov + values["other_deductions"]
+    deductions = cpp + ei + tax_fed + tax_prov + before_tax_deductions + values["other_deductions"]
     net = round(gross - deductions + values["reimbursements"], 2)
     return {
         "regular_pay": round(regular_pay, 2),
         "overtime_pay": round(overtime_pay, 2),
         "gross": round(gross, 2),
+        "taxable_pay": round(taxable_pay, 2),
+        "before_tax_deductions": round(before_tax_deductions, 2),
         "cpp": cpp,
         "ei": ei,
         "tax_fed": tax_fed,
         "tax_prov": tax_prov,
+        "additional_tax": round(additional_tax, 2),
         "other_deductions": round(values["other_deductions"], 2),
         "reimbursements": round(values["reimbursements"], 2),
         "total_deductions": round(deductions, 2),
@@ -449,10 +465,13 @@ def make_payroll_register_row(values: dict, calc: dict, ytd_before: dict) -> dic
             "vacation_pay": values["vacation_pay"],
             "vac_accrual": values["vac_accrual"],
             "gross": calc["gross"],
+            "taxable_pay": calc["taxable_pay"],
+            "before_tax_d": calc["before_tax_deductions"],
             "cpp": calc["cpp"],
             "ei": calc["ei"],
             "tax_fed": calc["tax_fed"],
             "tax_prov": calc["tax_prov"],
+            "additional_tax": calc["additional_tax"],
             "other_d": calc["other_deductions"],
             "reimb": calc["reimbursements"],
             "net": calc["net"],
@@ -515,7 +534,7 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
     details = [
         ["Employee", employee["name"], "Pay date", str(payroll["pay_date"])],
         ["Position", employee["position"], "Pay period", f"{payroll['pay_start']} to {payroll['pay_end']}"],
-        ["Frequency", payroll["frequency"], "Province", "BC"],
+        ["Frequency", payroll["frequency"], "Province", employee.get("province", "British Columbia")],
     ]
     earnings = [
         ["Earnings", "Amount"],
@@ -525,9 +544,11 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
         ["Vacation pay", payroll["vacation_pay"]],
         ["Bonus", payroll["bonus"]],
         ["Gross pay", calc["gross"]],
+        ["Taxable pay", calc.get("taxable_pay", calc["gross"])],
     ]
     deductions = [
         ["Deductions", "Amount"],
+        ["Before-tax deductions", payroll.get("before_tax_deductions", 0.0)],
         ["CPP", payroll["cpp"]],
         ["EI", payroll["ei"]],
         ["Federal tax", payroll["tax_fed"]],
@@ -764,8 +785,12 @@ with annual_tab:
                 st.error(str(exc))
 
 with payroll_tab:
-    st.subheader("Payroll calculator")
-    st.caption("Enter one pay period, then download a payslip PDF and updated payroll register.")
+    st.subheader("Payroll deductions calculator")
+    st.caption("Enter one pay period in a CRA PDOC-style workflow, then download a payslip PDF and updated payroll register.")
+    st.info(
+        "Use this like CRA PDOC: enter the employment province, pay period, taxable earnings, TD1 claim amounts, "
+        "YTD CPP/EI already deducted, and any extra deductions. Review final remittances against CRA PDOC."
+    )
 
     register_file = st.file_uploader(
         "Upload existing payroll register Excel",
@@ -782,25 +807,26 @@ with payroll_tab:
         payroll_register = pd.DataFrame(columns=PAYROLL_COLUMNS)
 
     with st.form("payroll-form"):
-        st.markdown("**Company**")
+        st.markdown("**Step 1 - Company**")
         company_cols = st.columns(2)
         company_name = company_cols[0].text_input("Company name", value="Raman Tax & Accounting Inc.")
         company_address = company_cols[1].text_input("Company address", value="Surrey, BC")
 
-        st.markdown("**Employee**")
-        emp_cols = st.columns(3)
+        st.markdown("**Step 2 - Employee**")
+        emp_cols = st.columns(4)
         employee_name = emp_cols[0].text_input("Employee name")
         employee_id = emp_cols[1].text_input("Employee ID")
         position = emp_cols[2].text_input("Position")
+        province = emp_cols[3].selectbox("Province of employment", ["British Columbia"], index=0)
 
-        st.markdown("**Pay period**")
+        st.markdown("**Step 3 - Pay period**")
         period_cols = st.columns(4)
         frequency = period_cols[0].selectbox("Pay frequency", list(PAY_PERIODS.keys()), index=1)
         pay_start = period_cols[1].date_input("Pay start", value=date.today())
         pay_end = period_cols[2].date_input("Pay end", value=date.today())
         pay_date = period_cols[3].date_input("Pay date", value=date.today())
 
-        st.markdown("**Earnings**")
+        st.markdown("**Step 4 - Earnings**")
         earn_cols = st.columns(4)
         hours = earn_cols[0].number_input("Regular hours", min_value=0.0, value=0.0, step=0.5)
         rate = earn_cols[1].number_input("Hourly rate", min_value=0.0, value=0.0, step=0.5)
@@ -816,14 +842,32 @@ with payroll_tab:
         sick_pay = earn_cols3[1].number_input("Sick pay", min_value=0.0, value=0.0, step=10.0)
         vac_accrual = earn_cols3[2].number_input("Vacation accrual", min_value=0.0, value=0.0, step=10.0)
 
-        st.markdown("**Year-to-date caps**")
+        st.markdown("**Step 5 - Tax credits and exemptions**")
+        claim_cols = st.columns(4)
+        federal_claim_amount = claim_cols[0].number_input(
+            "Federal TD1 claim amount", min_value=0.0, value=float(FED_BPA_2026), step=100.0
+        )
+        provincial_claim_amount = claim_cols[1].number_input(
+            "BC TD1 claim amount", min_value=0.0, value=float(BC_BPA_2026), step=100.0
+        )
+        cpp_exempt = claim_cols[2].checkbox("CPP exempt")
+        ei_exempt = claim_cols[3].checkbox("EI exempt")
+
+        st.markdown("**Step 6 - Year-to-date and adjustments**")
         ytd_cols = st.columns(3)
         ytd_cpp = ytd_cols[0].number_input("YTD CPP already deducted", min_value=0.0, value=0.0, step=10.0)
         ytd_cpp2 = ytd_cols[1].number_input("YTD CPP2 already deducted", min_value=0.0, value=0.0, step=10.0)
         ytd_ei = ytd_cols[2].number_input("YTD EI already deducted", min_value=0.0, value=0.0, step=10.0)
-
-        st.markdown("**Manual adjustment**")
-        other_deductions = st.number_input("Other deductions", min_value=0.0, value=0.0, step=10.0)
+        adjust_cols = st.columns(3)
+        before_tax_deductions = adjust_cols[0].number_input(
+            "Before-tax deductions", min_value=0.0, value=0.0, step=10.0, help="Examples: RRSP or pension amounts deducted before tax."
+        )
+        additional_tax = adjust_cols[1].number_input(
+            "Additional tax to deduct", min_value=0.0, value=0.0, step=10.0, help="Extra income tax requested by the employee."
+        )
+        other_deductions = adjust_cols[2].number_input(
+            "After-tax deductions", min_value=0.0, value=0.0, step=10.0, help="Examples: advances, benefits recovery, or other non-tax deductions."
+        )
         submitted = st.form_submit_button("Calculate payroll", type="primary")
 
     if submitted:
@@ -835,6 +879,7 @@ with payroll_tab:
             "pay_start": pay_start,
             "pay_end": pay_end,
             "pay_date": pay_date,
+            "province": province,
             "salary_amount": salary_amount,
             "overtime_hours": overtime_hours,
             "overtime_rate": overtime_rate,
@@ -844,6 +889,12 @@ with payroll_tab:
             "vac_accrual": vac_accrual,
             "bonus": bonus,
             "reimbursements": reimbursements,
+            "federal_claim_amount": federal_claim_amount,
+            "provincial_claim_amount": provincial_claim_amount,
+            "cpp_exempt": cpp_exempt,
+            "ei_exempt": ei_exempt,
+            "before_tax_deductions": before_tax_deductions,
+            "additional_tax": additional_tax,
             "other_deductions": other_deductions,
         }
         ytd_before = payroll_ytd_before(payroll_register, employee_id)
@@ -858,7 +909,7 @@ with payroll_tab:
         )
         st.session_state["payroll_calc"] = {
             "company": {"name": company_name, "address": company_address},
-            "employee": {"name": employee_name or "Employee", "id": employee_id, "position": position},
+            "employee": {"name": employee_name or "Employee", "id": employee_id, "position": position, "province": province},
             "payroll": {
                 **payroll_input,
                 "pay_start": pay_start,
@@ -886,6 +937,8 @@ with payroll_tab:
                 {"Item": "Overtime pay", "Amount": calc["overtime_pay"]},
                 {"Item": "Sick pay", "Amount": saved["payroll"]["sick_pay"]},
                 {"Item": "Gross pay", "Amount": calc["gross"]},
+                {"Item": "Taxable pay", "Amount": calc.get("taxable_pay", calc["gross"])},
+                {"Item": "Before-tax deductions", "Amount": -calc.get("before_tax_deductions", 0.0)},
                 {"Item": "CPP", "Amount": -calc["cpp"]},
                 {"Item": "EI", "Amount": -calc["ei"]},
                 {"Item": "Federal tax", "Amount": -calc["tax_fed"]},
@@ -905,6 +958,8 @@ with payroll_tab:
             "ei": calc["ei"],
             "tax_fed": calc["tax_fed"],
             "tax_prov": calc["tax_prov"],
+            "taxable_pay": calc.get("taxable_pay", calc["gross"]),
+            "before_tax_deductions": calc.get("before_tax_deductions", 0.0),
             "total_deductions": calc["total_deductions"],
             "net": calc["net"],
         }
