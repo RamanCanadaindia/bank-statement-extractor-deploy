@@ -615,6 +615,56 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
     return buffer.getvalue()
 
 
+def build_payslip_excel(company: dict, employee: dict, payroll: dict, calc: dict) -> bytes:
+    buffer = io.BytesIO()
+    rows = [
+        ["Company", company["name"], "", ""],
+        ["Company address", company["address"], "", ""],
+        ["Employee", employee["name"], "Pay date", payroll["pay_date"]],
+        ["Position", employee["position"], "Pay period", f"{payroll['pay_start']} to {payroll['pay_end']}"],
+        ["Frequency", payroll["frequency"], "Province", employee.get("province", "British Columbia")],
+        ["", "", "", ""],
+        ["Earnings", "Amount", "Deductions", "Amount"],
+        ["Regular pay", calc["regular_pay"], "Before-tax deductions", payroll.get("before_tax_deductions", 0.0)],
+        ["Salary amount", payroll["salary_amount"], "CPP", payroll["cpp"]],
+        ["Overtime pay", calc["overtime_pay"], "EI", payroll["ei"]],
+        ["Stat pay", payroll["stat_pay"], "Federal tax", payroll["tax_fed"]],
+        ["Sick pay", payroll["sick_pay"], "Provincial tax", payroll["tax_prov"]],
+        ["Vacation pay", payroll["vacation_pay"], "Other deductions", payroll["other_deductions"]],
+        ["Bonus", payroll["bonus"], "Total deductions", payroll["total_deductions"]],
+        ["Gross pay", calc["gross"], "Reimbursements", payroll["reimbursements"]],
+        ["Taxable income for tax", calc.get("taxable_income_for_tax", calc["gross"]), "Net pay", payroll["net"]],
+        ["", "", "", ""],
+        ["Employer CPP", calc["employer_cpp"], "Employer EI", calc["employer_ei"]],
+        ["Review payroll deductions against CRA PDOC before remitting or filing.", "", "", ""],
+    ]
+    df = pd.DataFrame(rows)
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Payslip", index=False, header=False)
+        ws = writer.book["Payslip"]
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        title_fill = PatternFill("solid", fgColor="E8EEF7")
+        money_format = '$#,##0.00'
+        for cell in ws[7]:
+            cell.font = Font(bold=True)
+            cell.fill = title_fill
+        for row in range(8, 17):
+            ws.cell(row=row, column=2).number_format = money_format
+            ws.cell(row=row, column=4).number_format = money_format
+        for row in [1, 2, 3, 4, 5, 18, 19]:
+            ws.cell(row=row, column=1).font = Font(bold=True)
+        for column in ["A", "C"]:
+            ws.column_dimensions[column].width = 26
+        for column in ["B", "D"]:
+            ws.column_dimensions[column].width = 18
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="top")
+        ws.freeze_panes = "A7"
+    return buffer.getvalue()
+
+
 def uploaded_enrichment_temp(uploaded_file) -> Path | None:
     if uploaded_file is None:
         return None
@@ -1000,6 +1050,13 @@ with payroll_tab:
             file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.pdf",
             mime="application/pdf",
             type="primary",
+        )
+        excel_payslip_bytes = build_payslip_excel(saved["company"], saved["employee"], pdf_payroll, calc)
+        st.download_button(
+            "Download payslip Excel",
+            data=excel_payslip_bytes,
+            file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         register_bytes = export_payroll_register(saved["updated_register"])
         st.download_button(
