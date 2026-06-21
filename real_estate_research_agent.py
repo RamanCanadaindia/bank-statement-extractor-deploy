@@ -197,6 +197,25 @@ def realtor_payload(params: dict[str, str], page: int) -> dict[str, str]:
         "Version": "7.0",
         "CurrentPage": str(page),
     }
+    optional_filters = [
+        "PriceMin",
+        "PriceMax",
+        "BedRange",
+        "BathRange",
+        "LandSizeRange",
+        "BuildingTypeId",
+        "ConstructionStyleAttachmentId",
+        "StoreysMin",
+        "StoreysMax",
+        "YearBuiltMin",
+        "YearBuiltMax",
+        "ParkingSpaceTotalMin",
+        "ParkingSpaceTotalMax",
+        "Keywords",
+    ]
+    for key in optional_filters:
+        if params.get(key):
+            payload[key] = params[key]
     if "Center" in params:
         center = params["Center"].split(",")
         if len(center) == 2:
