@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
-CITIES = {"surrey", "langley", "white rock", "abbotsford", "chilliwack"}
+CITIES = {"surrey", "langley", "white rock", "abbotsford", "chilliwack", "aberdeen"}
 
 
 @dataclasses.dataclass
