@@ -516,14 +516,33 @@ def score_property(
     school_score = clamp((signals.school_score or 0) * 10)
     development_score = clamp((signals.development_score or 0) * 10)
 
-    investment_score = round(
-        appreciation_score * 0.30
-        + cash_flow_score * 0.25
-        + comp_score * 0.20
-        + transit_score * 0.10
-        + school_score * 0.05
-        + development_score * 0.10
+    has_enrichment = any(
+        value is not None
+        for value in (
+            change_1y,
+            change_3y,
+            change_5y,
+            avg_comp,
+            comp_discount,
+            estimated_rent,
+            cash_flow,
+            signals.transit_minutes,
+            signals.school_score,
+            signals.development_score,
+        )
     )
+
+    if has_enrichment:
+        investment_score = round(
+            appreciation_score * 0.30
+            + cash_flow_score * 0.25
+            + comp_score * 0.20
+            + transit_score * 0.10
+            + school_score * 0.05
+            + development_score * 0.10
+        )
+    else:
+        investment_score = round(realtor_only_score(listing, price_per_sqft))
 
     flags = []
     if comp_discount is not None and comp_discount <= -0.03:
@@ -536,6 +555,9 @@ def score_property(
         flags.append("Mortgage-investment fit")
 
     notes = build_notes(listing, change_1y, change_5y, comp_discount, cash_flow, flags)
+    if not has_enrichment:
+        fallback_note = realtor_only_note(listing, price_per_sqft)
+        notes = ". ".join(part for part in [fallback_note, notes] if part)
 
     return {
         "Listing ID": listing.listing_id,
@@ -576,6 +598,41 @@ def score_property(
         "_rental": dataclasses.asdict(rental),
         "_signals": dataclasses.asdict(signals),
     }
+
+
+def realtor_only_score(listing: PropertyListing, price_per_sqft: float | None) -> float:
+    score = 0.0
+    if price_per_sqft:
+        score += clamp((800 - price_per_sqft) / 500 * 45)
+    if listing.list_price:
+        score += clamp((1_000_000 - listing.list_price) / 600_000 * 20)
+    lot_sqft = parse_sqft(listing.lot_size)
+    if lot_sqft:
+        score += clamp(lot_sqft / 8_000 * 15)
+    if listing.bedrooms:
+        score += clamp(listing.bedrooms / 6 * 10)
+    property_type = listing.property_type.lower()
+    if "land" in property_type:
+        score += 12
+    elif "house" in property_type or "single family" in property_type:
+        score += 8
+    elif "town" in property_type:
+        score += 5
+    return clamp(score)
+
+
+def realtor_only_note(listing: PropertyListing, price_per_sqft: float | None) -> str:
+    parts = ["Basic Realtor-only score"]
+    if price_per_sqft:
+        parts.append(f"${price_per_sqft:,.0f}/sf")
+    lot_sqft = parse_sqft(listing.lot_size)
+    if lot_sqft:
+        parts.append(f"{lot_sqft:,.0f} sf lot")
+    if listing.bedrooms:
+        parts.append(f"{listing.bedrooms:g} bedrooms")
+    if listing.property_type:
+        parts.append(listing.property_type)
+    return "; ".join(parts)
 
 
 PUBLIC_HEADERS = [
