@@ -968,12 +968,6 @@ with real_estate_tab:
             2. If Realtor.ca blocks the live search, upload a CSV under **Realtor.ca CSV fallback / combined CSV** and run again.
             3. For the cleanest workflow, upload one combined CSV that has both Realtor.ca listing columns and Zealty columns.
 
-            **How to get the CSV fallback / combined CSV**
-
-            - Option 1: Send/use the Realtor.ca map URL to generate a CSV fallback file, then upload that file under
-              **Realtor.ca CSV fallback / combined CSV**.
-            - Option 2: If live search works, click **Download property CSV** after results load, then reuse that CSV later.
-
             **Best one-file workflow**
 
             Use a **Zealty-enriched combined CSV**. This is one CSV file that contains:
