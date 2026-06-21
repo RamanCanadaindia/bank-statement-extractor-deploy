@@ -959,6 +959,49 @@ with real_estate_tab:
         "The URL should start with https://www.realtor.ca/map# and include LatitudeMax / LatitudeMin. "
         "If Realtor.ca blocks the live search, upload a Realtor.ca CSV export below."
     )
+    with st.expander("Real estate agent guide"):
+        st.markdown(
+            """
+            **Quick start**
+
+            1. Paste a Realtor.ca **map** URL, then click **Run real estate search**.
+            2. If Realtor.ca blocks the live search, upload a CSV under **Realtor.ca CSV fallback / combined CSV** and run again.
+            3. For one-step use, upload a combined CSV that has both Realtor.ca listing columns and Zealty columns.
+
+            **Do not paste**
+
+            - A single property URL like `https://www.realtor.ca/real-estate/...`
+
+            **Score meaning**
+
+            - Higher score is better.
+            - `80-100`: strongest opportunities
+            - `60-79`: worth reviewing
+            - `40-59`: average / needs more research
+            - `0-39`: weaker based on current data
+
+            **Basic Realtor-only score**
+
+            Used when Zealty/rental data is blank. It ranks by lower price per square foot, lower list price,
+            larger lot size, more bedrooms, and property type.
+
+            **Full investment score**
+
+            Used when enrichment data is uploaded:
+
+            - Price appreciation: 30%
+            - Cash flow: 25%
+            - Comparable sales discount: 20%
+            - Transit access: 10%
+            - School quality: 5%
+            - Development potential: 10%
+
+            **Zealty enrichment**
+
+            Upload Zealty CSV/JSON to add sold history, sale dates, previous listing prices, price changes,
+            days on market, and comparable-sale notes.
+            """
+        )
 
     realtor_url = st.text_area("Realtor.ca map search URL", value=DEFAULT_REALTOR_URL, height=110)
     realtor_csv_file = st.file_uploader(
