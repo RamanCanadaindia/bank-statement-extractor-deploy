@@ -635,7 +635,7 @@ def run_real_estate_search(
     signal_file,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     realtor_csv_path = uploaded_csv_temp(realtor_csv_file)
-    zealty_path = uploaded_enrichment_temp(zealty_file)
+    zealty_path = uploaded_enrichment_temp(zealty_file) or realtor_csv_path
     rental_path = uploaded_enrichment_temp(rental_file)
     signal_path = uploaded_enrichment_temp(signal_file)
 
@@ -962,9 +962,13 @@ with real_estate_tab:
 
     realtor_url = st.text_area("Realtor.ca map search URL", value=DEFAULT_REALTOR_URL, height=110)
     realtor_csv_file = st.file_uploader(
-        "Realtor.ca CSV fallback",
+        "Realtor.ca CSV fallback / combined CSV",
         type=["csv"],
-        help="Use this when Realtor.ca blocks the live map request. Columns should include Address, City, MLS Number, List Price, bedrooms, bathrooms, square feet, etc.",
+        help=(
+            "Use this when Realtor.ca blocks the live map request. This can be a simple Realtor.ca CSV, "
+            "or one combined CSV that also includes Zealty columns such as Price 1Y Ago, Price 5Y Ago, "
+            "Price Change History, and Days on Market."
+        ),
     )
 
     with st.expander("Optional enrichment files"):
