@@ -93,7 +93,12 @@ BC_BRACKETS_2026 = [
 ]
 FED_BPA_2026 = 16452
 BC_BPA_2026 = 13216
+CANADA_EMPLOYMENT_AMOUNT_2026 = 1500
+BC_TAX_REDUCTION_2026 = 596
+BC_TAX_REDUCTION_THRESHOLD_2026 = 24976
+BC_TAX_REDUCTION_RATE_2026 = 0.0356
 CPP1_RATE = 0.0595
+CPP1_BASE_RATE = 0.0495
 CPP2_RATE = 0.04
 CPP_BASIC_EXEMPTION = 3500
 CPP1_YMPE = 71300
@@ -342,8 +347,9 @@ def calculate_payroll(values: dict) -> dict:
     taxable_pay = max(0.0, gross - before_tax_deductions)
     annualized_gross = taxable_pay * periods
     cpp1_base = max(0.0, min(annualized_gross, CPP1_YMPE) - CPP_BASIC_EXEMPTION)
+    cpp1_base_period = cpp1_base / periods
     cpp1 = min(
-        cpp1_base * CPP1_RATE / periods,
+        cpp1_base_period * CPP1_RATE,
         max(0.0, (CPP1_YMPE - CPP_BASIC_EXEMPTION) * CPP1_RATE - values["ytd_cpp"]),
     )
     cpp2_base = max(0.0, min(annualized_gross, CPP2_YAMPE) - CPP1_YMPE)
@@ -352,17 +358,38 @@ def calculate_payroll(values: dict) -> dict:
         max(0.0, (CPP2_YAMPE - CPP1_YMPE) * CPP2_RATE - values["ytd_cpp2"]),
     )
     cpp = 0.0 if values.get("cpp_exempt") else round(max(0.0, cpp1 + cpp2), 2)
+    cpp_enhanced = (
+        0.0
+        if values.get("cpp_exempt")
+        else round(max(0.0, cpp1_base_period * (CPP1_RATE - CPP1_BASE_RATE) + cpp2), 2)
+    )
+    cpp_basic = 0.0 if values.get("cpp_exempt") else round(max(0.0, cpp - cpp_enhanced), 2)
 
     ei_max = EI_MIE * EI_RATE
     ei = 0.0 if values.get("ei_exempt") else round(min(taxable_pay * EI_RATE, max(0.0, ei_max - values["ytd_ei"])), 2)
 
-    federal_annual = progressive_tax(annualized_gross, FED_BRACKETS_2026)
-    federal_credit = values.get("federal_claim_amount", FED_BPA_2026) * 0.14
+    tax_annual_income = max(0.0, (taxable_pay - cpp_enhanced) * periods)
+    federal_annual = progressive_tax(tax_annual_income, FED_BRACKETS_2026)
+    federal_credit = (
+        values.get("federal_claim_amount", FED_BPA_2026)
+        + min(CANADA_EMPLOYMENT_AMOUNT_2026, tax_annual_income)
+        + cpp_basic * periods
+        + ei * periods
+    ) * 0.14
     tax_fed = round(max(0.0, federal_annual - federal_credit) / periods, 2)
 
-    bc_annual = progressive_tax(annualized_gross, BC_BRACKETS_2026)
-    bc_credit = values.get("provincial_claim_amount", BC_BPA_2026) * 0.0506
-    tax_prov = round(max(0.0, bc_annual - bc_credit) / periods, 2)
+    bc_annual = progressive_tax(tax_annual_income, BC_BRACKETS_2026)
+    bc_credit = (
+        values.get("provincial_claim_amount", BC_BPA_2026)
+        + cpp_basic * periods
+        + ei * periods
+    ) * 0.0506
+    bc_reduction = max(
+        0.0,
+        BC_TAX_REDUCTION_2026
+        - max(0.0, tax_annual_income - BC_TAX_REDUCTION_THRESHOLD_2026) * BC_TAX_REDUCTION_RATE_2026,
+    )
+    tax_prov = round(max(0.0, bc_annual - bc_credit - bc_reduction) / periods, 2)
     tax_fed = round(tax_fed + additional_tax, 2)
 
     deductions = cpp + ei + tax_fed + tax_prov + before_tax_deductions + values["other_deductions"]
@@ -372,8 +399,11 @@ def calculate_payroll(values: dict) -> dict:
         "overtime_pay": round(overtime_pay, 2),
         "gross": round(gross, 2),
         "taxable_pay": round(taxable_pay, 2),
+        "taxable_income_for_tax": round(tax_annual_income / periods, 2),
         "before_tax_deductions": round(before_tax_deductions, 2),
         "cpp": cpp,
+        "cpp_basic": cpp_basic,
+        "cpp_enhanced": cpp_enhanced,
         "ei": ei,
         "tax_fed": tax_fed,
         "tax_prov": tax_prov,
@@ -465,7 +495,7 @@ def make_payroll_register_row(values: dict, calc: dict, ytd_before: dict) -> dic
             "vacation_pay": values["vacation_pay"],
             "vac_accrual": values["vac_accrual"],
             "gross": calc["gross"],
-            "taxable_pay": calc["taxable_pay"],
+            "taxable_pay": calc["taxable_income_for_tax"],
             "before_tax_d": calc["before_tax_deductions"],
             "cpp": calc["cpp"],
             "ei": calc["ei"],
@@ -544,7 +574,7 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
         ["Vacation pay", payroll["vacation_pay"]],
         ["Bonus", payroll["bonus"]],
         ["Gross pay", calc["gross"]],
-        ["Taxable pay", calc.get("taxable_pay", calc["gross"])],
+        ["Taxable income for tax", calc.get("taxable_income_for_tax", calc["gross"])],
     ]
     deductions = [
         ["Deductions", "Amount"],
@@ -937,7 +967,7 @@ with payroll_tab:
                 {"Item": "Overtime pay", "Amount": calc["overtime_pay"]},
                 {"Item": "Sick pay", "Amount": saved["payroll"]["sick_pay"]},
                 {"Item": "Gross pay", "Amount": calc["gross"]},
-                {"Item": "Taxable pay", "Amount": calc.get("taxable_pay", calc["gross"])},
+                {"Item": "Taxable income for tax", "Amount": calc.get("taxable_income_for_tax", calc["gross"])},
                 {"Item": "Before-tax deductions", "Amount": -calc.get("before_tax_deductions", 0.0)},
                 {"Item": "CPP", "Amount": -calc["cpp"]},
                 {"Item": "EI", "Amount": -calc["ei"]},
@@ -958,7 +988,7 @@ with payroll_tab:
             "ei": calc["ei"],
             "tax_fed": calc["tax_fed"],
             "tax_prov": calc["tax_prov"],
-            "taxable_pay": calc.get("taxable_pay", calc["gross"]),
+            "taxable_pay": calc.get("taxable_income_for_tax", calc["gross"]),
             "before_tax_deductions": calc.get("before_tax_deductions", 0.0),
             "total_deductions": calc["total_deductions"],
             "net": calc["net"],
