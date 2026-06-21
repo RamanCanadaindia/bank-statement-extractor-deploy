@@ -966,7 +966,7 @@ with real_estate_tab:
 
             1. Paste a Realtor.ca **map** URL, then click **Run real estate search**.
             2. If Realtor.ca blocks the live search, upload a CSV under **Realtor.ca CSV fallback / combined CSV** and run again.
-            3. For one-step use, upload a combined CSV that has both Realtor.ca listing columns and Zealty columns.
+            3. For the cleanest workflow, upload one combined CSV that has both Realtor.ca listing columns and Zealty columns.
 
             **How to get the CSV fallback / combined CSV**
 
@@ -1015,8 +1015,7 @@ with real_estate_tab:
 
             **Zealty enrichment**
 
-            Upload Zealty CSV/JSON to add sold history, sale dates, previous listing prices, price changes,
-            days on market, and comparable-sale notes.
+            Put Zealty columns directly inside the combined CSV. No separate optional upload is needed.
             """
         )
 
@@ -1031,28 +1030,10 @@ with real_estate_tab:
         ),
     )
 
-    with st.expander("Optional enrichment files"):
-        st.caption("Use Zealty CSV/JSON for sold history, sale dates, previous prices, price changes, days on market, and comparable-sales notes.")
-        zealty_url = st.text_input(
-            "Zealty URL",
-            value="",
-            placeholder="Paste Zealty search or property URL here",
-            help="This saves the Zealty source link in the output. Upload Zealty CSV/JSON to populate sold history and comparable-sale fields.",
-        )
-        enrich_cols = st.columns(3)
-        zealty_file = enrich_cols[0].file_uploader("Zealty CSV / JSON", type=["csv", "json"], key="zealty-json")
-        rental_file = enrich_cols[1].file_uploader("Rental CSV / JSON", type=["csv", "json"], key="rental-json")
-        signal_file = enrich_cols[2].file_uploader(
-            "Transit / school / development CSV / JSON",
-            type=["csv", "json"],
-            key="signal-json",
-        )
-        st.download_button(
-            "Download Zealty CSV template",
-            data=pd.DataFrame(columns=ZEALTY_TEMPLATE_COLUMNS).to_csv(index=False).encode("utf-8-sig"),
-            file_name="zealty_enrichment_template.csv",
-            mime="text/csv",
-        )
+    zealty_url = ""
+    zealty_file = None
+    rental_file = None
+    signal_file = None
 
     if st.button("Run real estate search", type="primary", use_container_width=True):
         if not realtor_url.strip() and realtor_csv_file is None:
