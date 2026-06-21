@@ -721,6 +721,119 @@ def build_pd7a_excel(company: dict, payroll: dict, calc: dict) -> bytes:
     return buffer.getvalue()
 
 
+def money(value) -> str:
+    if pd.isna(value):
+        value = 0
+    return f"${float(value or 0):,.2f}"
+
+
+def replace_docx_placeholders(doc, replacements: dict[str, str]) -> None:
+    def patch_paragraph(paragraph) -> None:
+        for run in paragraph.runs:
+            for key, value in replacements.items():
+                if key in run.text:
+                    run.text = run.text.replace(key, value)
+
+    containers = [doc]
+    for section in doc.sections:
+        containers.extend([section.header, section.footer])
+    for container in containers:
+        for paragraph in container.paragraphs:
+            patch_paragraph(paragraph)
+        for table in container.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        patch_paragraph(paragraph)
+
+
+def build_docx_from_template(template_name: str, replacements: dict[str, str]) -> bytes:
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise RuntimeError("Word template output requires python-docx. Redeploy the app after installing requirements.") from exc
+
+    template_path = APP_DIR / "templates" / template_name
+    doc = Document(template_path)
+    replace_docx_placeholders(doc, replacements)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def payroll_template_replacements(company: dict, employee: dict, payroll: dict, calc: dict, register_row: pd.Series) -> dict[str, str]:
+    name_parts = employee["name"].split(maxsplit=1)
+    first_name = name_parts[0] if name_parts else ""
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
+    regular_detail = f"{payroll['hours']:.2f} hrs @ {money(payroll['rate'])}" if payroll["hours"] else money(calc["regular_pay"])
+    overtime_detail = (
+        f"{payroll['overtime_hours']:.2f} hrs @ {money(payroll['overtime_rate'])}"
+        if payroll["overtime_hours"]
+        else money(calc["overtime_pay"])
+    )
+    stat_detail = money(payroll["stat_pay"])
+    return {
+        "{{company_name}}": company["name"],
+        "{{company_address}}": company["address"],
+        "{{company_city}}": "",
+        "{{company_postal}}": "",
+        "{{company_phone}}": company.get("phone", ""),
+        "{{employee_first_name}}": first_name,
+        "{{employee_last_name}}": last_name,
+        "{{employee_address}}": employee.get("address", ""),
+        "{{employee_city}}": "",
+        "{{employee_province}}": employee.get("province", "British Columbia"),
+        "{{employee_postal}}": "",
+        "{{hire_date}}": str(employee.get("hire_date", "")),
+        "{{pay_start}}": str(payroll["pay_start"]),
+        "{{pay_end}}": str(payroll["pay_end"]),
+        "{{pay_date}}": str(payroll["pay_date"]),
+        "{{regular_detail}}": regular_detail,
+        "{{overtime_detail}}": overtime_detail,
+        "{{stat_detail}}": stat_detail,
+        "{{sick_pay}}": money(payroll["sick_pay"]),
+        "{{vacation_pay}}": money(payroll["vacation_pay"]),
+        "{{total_gross}}": money(calc["gross"]),
+        "{{cpp}}": money(calc["cpp"]),
+        "{{ei}}": money(calc["ei"]),
+        "{{tax_fed}}": money(calc["tax_fed"]),
+        "{{tax_prov}}": money(calc["tax_prov"]),
+        "{{net}}": money(calc["net"]),
+        "{{ytd_regular_pay}}": money(register_row.get("ytd_regular_pay", 0)),
+        "{{ytd_overtime_pay}}": money(register_row.get("ytd_overtime_pay", 0)),
+        "{{ytd_stat_pay}}": money(register_row.get("ytd_stat_pay", 0)),
+        "{{ytd_sick_pay}}": money(register_row.get("ytd_sick_pay", 0)),
+        "{{ytd_vacation_pay}}": money(register_row.get("ytd_vacation_pay", 0)),
+        "{{ytd_gross}}": money(register_row.get("ytd_gross", calc["gross"])),
+        "{{ytd_cpp}}": money(register_row.get("ytd_cpp", calc["cpp"])),
+        "{{ytd_ei}}": money(register_row.get("ytd_ei", calc["ei"])),
+        "{{ytd_tax_fed}}": money(register_row.get("ytd_tax_fed", calc["tax_fed"])),
+        "{{ytd_tax_prov}}": money(register_row.get("ytd_tax_prov", calc["tax_prov"])),
+        "{{ytd_net}}": money(register_row.get("ytd_net", calc["net"])),
+    }
+
+
+def pd7a_template_replacements(company: dict, payroll: dict, calc: dict) -> dict[str, str]:
+    income_tax = round(calc["tax_fed"] + calc["tax_prov"], 2)
+    cpp_total = round(calc["cpp"] + calc["employer_cpp"], 2)
+    ei_total = round(calc["ei"] + calc["employer_ei"], 2)
+    grand_total = round(income_tax + cpp_total + ei_total, 2)
+    return {
+        "{{company_name}}": company["name"],
+        "{{pd7a_period}}": f"{payroll['pay_start']} to {payroll['pay_end']}",
+        "{{pd7a_employee_count}}": "1",
+        "{{pd7a_gross_pay}}": money(calc["gross"]),
+        "{{pd7a_income_tax}}": money(income_tax),
+        "{{pd7a_cpp_ee}}": money(calc["cpp"]),
+        "{{pd7a_cpp_er}}": money(calc["employer_cpp"]),
+        "{{pd7a_cpp_total}}": money(cpp_total),
+        "{{pd7a_ei_ee}}": money(calc["ei"]),
+        "{{pd7a_ei_er}}": money(calc["employer_ei"]),
+        "{{pd7a_ei_total}}": money(ei_total),
+        "{{pd7a_grand_total}}": money(grand_total),
+    }
+
+
 def uploaded_enrichment_temp(uploaded_file) -> Path | None:
     if uploaded_file is None:
         return None
@@ -944,10 +1057,11 @@ with payroll_tab:
 
     with st.form("payroll-form"):
         st.markdown("**Step 1 - Company**")
-        company_cols = st.columns(3)
+        company_cols = st.columns(4)
         company_name = company_cols[0].text_input("Company name", value="Raman Tax & Accounting Inc.")
         company_address = company_cols[1].text_input("Company address", value="Surrey, BC")
-        payroll_account = company_cols[2].text_input("Payroll account number", placeholder="123456789RP0001")
+        company_phone = company_cols[2].text_input("Company phone")
+        payroll_account = company_cols[3].text_input("Payroll account number", placeholder="123456789RP0001")
 
         st.markdown("**Step 2 - Employee**")
         emp_cols = st.columns(4)
@@ -955,6 +1069,9 @@ with payroll_tab:
         employee_id = emp_cols[1].text_input("Employee ID")
         position = emp_cols[2].text_input("Position")
         province = emp_cols[3].selectbox("Province of employment", ["British Columbia"], index=0)
+        emp_extra_cols = st.columns(2)
+        employee_address = emp_extra_cols[0].text_input("Employee address")
+        hire_date = emp_extra_cols[1].date_input("Date of hire", value=date.today())
 
         st.markdown("**Step 3 - Pay period**")
         period_cols = st.columns(4)
@@ -1045,8 +1162,20 @@ with payroll_tab:
             ignore_index=True,
         )
         st.session_state["payroll_calc"] = {
-            "company": {"name": company_name, "address": company_address, "payroll_account": payroll_account},
-            "employee": {"name": employee_name or "Employee", "id": employee_id, "position": position, "province": province},
+            "company": {
+                "name": company_name,
+                "address": company_address,
+                "phone": company_phone,
+                "payroll_account": payroll_account,
+            },
+            "employee": {
+                "name": employee_name or "Employee",
+                "id": employee_id,
+                "position": position,
+                "province": province,
+                "address": employee_address,
+                "hire_date": hire_date,
+            },
             "payroll": {
                 **payroll_input,
                 "pay_start": pay_start,
@@ -1100,13 +1229,34 @@ with payroll_tab:
             "total_deductions": calc["total_deductions"],
             "net": calc["net"],
         }
+        latest_register_row = saved["updated_register"].tail(1).iloc[0]
+        payslip_docx = build_docx_from_template(
+            "payslip_template.docx",
+            payroll_template_replacements(saved["company"], saved["employee"], pdf_payroll, calc, latest_register_row),
+        )
+        pd7a_docx = build_docx_from_template(
+            "pd7a_template.docx",
+            pd7a_template_replacements(saved["company"], saved["payroll"], calc),
+        )
+        st.download_button(
+            "Download payslip Word template",
+            data=payslip_docx,
+            file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            type="primary",
+        )
+        st.download_button(
+            "Download PD7A Word template",
+            data=pd7a_docx,
+            file_name=f"PD7A_Remittance_{saved['payroll']['pay_date']}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
         pdf_bytes = build_payslip_pdf(saved["company"], saved["employee"], pdf_payroll, calc)
         st.download_button(
             "Download payslip PDF",
             data=pdf_bytes,
             file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.pdf",
             mime="application/pdf",
-            type="primary",
         )
         excel_payslip_bytes = build_payslip_excel(saved["company"], saved["employee"], pdf_payroll, calc)
         st.download_button(
