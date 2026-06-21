@@ -665,6 +665,62 @@ def build_payslip_excel(company: dict, employee: dict, payroll: dict, calc: dict
     return buffer.getvalue()
 
 
+def build_pd7a_excel(company: dict, payroll: dict, calc: dict) -> bytes:
+    income_tax = round(calc["tax_fed"] + calc["tax_prov"], 2)
+    employee_cpp = round(calc["cpp"], 2)
+    employer_cpp = round(calc["employer_cpp"], 2)
+    employee_ei = round(calc["ei"], 2)
+    employer_ei = round(calc["employer_ei"], 2)
+    total_cpp = round(employee_cpp + employer_cpp, 2)
+    total_ei = round(employee_ei + employer_ei, 2)
+    total_remittance = round(income_tax + total_cpp + total_ei, 2)
+    rows = [
+        ["PD7A-style payroll remittance summary", "", ""],
+        ["Use this worksheet to fill CRA My Business Account or your official PD7A voucher.", "", ""],
+        ["Employer name", company["name"], ""],
+        ["Payroll account number", company.get("payroll_account", ""), ""],
+        ["Remittance period", f"{payroll['pay_start']} to {payroll['pay_end']}", ""],
+        ["Payment date", payroll["pay_date"], ""],
+        ["", "", ""],
+        ["Line", "Description", "Amount"],
+        ["Gross payroll", "Total gross remuneration for the period", calc["gross"]],
+        ["Income tax", "Federal and provincial income tax deducted", income_tax],
+        ["Employee CPP", "CPP deducted from employee", employee_cpp],
+        ["Employer CPP", "Employer CPP contribution", employer_cpp],
+        ["Total CPP", "Employee CPP plus employer CPP", total_cpp],
+        ["Employee EI", "EI deducted from employee", employee_ei],
+        ["Employer EI", "Employer EI contribution", employer_ei],
+        ["Total EI", "Employee EI plus employer EI", total_ei],
+        ["Total remittance", "Income tax plus total CPP plus total EI", total_remittance],
+        ["", "", ""],
+        ["Review against CRA PDOC and CRA payroll remittance records before paying.", "", ""],
+    ]
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="PD7A Summary", index=False, header=False)
+        ws = writer.book["PD7A Summary"]
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        header_fill = PatternFill("solid", fgColor="E8EEF7")
+        total_fill = PatternFill("solid", fgColor="DDEBFF")
+        ws["A1"].font = Font(bold=True, size=14)
+        for cell in ws[8]:
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+        for row in range(9, 18):
+            ws.cell(row=row, column=3).number_format = '$#,##0.00'
+        for cell in ws[17]:
+            cell.font = Font(bold=True)
+            cell.fill = total_fill
+        ws.column_dimensions["A"].width = 24
+        ws.column_dimensions["B"].width = 54
+        ws.column_dimensions["C"].width = 18
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="top")
+    return buffer.getvalue()
+
+
 def uploaded_enrichment_temp(uploaded_file) -> Path | None:
     if uploaded_file is None:
         return None
@@ -888,9 +944,10 @@ with payroll_tab:
 
     with st.form("payroll-form"):
         st.markdown("**Step 1 - Company**")
-        company_cols = st.columns(2)
+        company_cols = st.columns(3)
         company_name = company_cols[0].text_input("Company name", value="Raman Tax & Accounting Inc.")
         company_address = company_cols[1].text_input("Company address", value="Surrey, BC")
+        payroll_account = company_cols[2].text_input("Payroll account number", placeholder="123456789RP0001")
 
         st.markdown("**Step 2 - Employee**")
         emp_cols = st.columns(4)
@@ -988,7 +1045,7 @@ with payroll_tab:
             ignore_index=True,
         )
         st.session_state["payroll_calc"] = {
-            "company": {"name": company_name, "address": company_address},
+            "company": {"name": company_name, "address": company_address, "payroll_account": payroll_account},
             "employee": {"name": employee_name or "Employee", "id": employee_id, "position": position, "province": province},
             "payroll": {
                 **payroll_input,
@@ -1056,6 +1113,13 @@ with payroll_tab:
             "Download payslip Excel",
             data=excel_payslip_bytes,
             file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        pd7a_bytes = build_pd7a_excel(saved["company"], saved["payroll"], calc)
+        st.download_button(
+            "Download PD7A remittance summary",
+            data=pd7a_bytes,
+            file_name=f"PD7A_Remittance_{saved['payroll']['pay_date']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         register_bytes = export_payroll_register(saved["updated_register"])
