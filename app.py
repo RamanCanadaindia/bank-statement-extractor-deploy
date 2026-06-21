@@ -974,6 +974,17 @@ with real_estate_tab:
               **Realtor.ca CSV fallback / combined CSV**.
             - Option 2: If live search works, click **Download property CSV** after results load, then reuse that CSV later.
 
+            **Best one-file workflow**
+
+            Use a **Zealty-enriched combined CSV**. This is one CSV file that contains:
+
+            - Realtor.ca listing columns: address, MLS number, price, property type, beds, baths, square feet, lot size
+            - Zealty enrichment columns: sold price history, sale dates, price 1Y/3Y/5Y ago, previous listing prices,
+              price change history, days on market, Zealty URL
+
+            Upload this one rich combined file under **Realtor.ca CSV fallback / combined CSV**. You do not need to upload
+            a separate Zealty file if the Zealty columns are already inside the combined CSV.
+
             **Do not paste**
 
             - A single property URL like `https://www.realtor.ca/real-estate/...`
