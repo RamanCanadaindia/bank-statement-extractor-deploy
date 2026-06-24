@@ -808,6 +808,148 @@ def build_pd7a_excel(company: dict, payroll: dict, calc: dict) -> bytes:
     return buffer.getvalue()
 
 
+def build_pd7a_pdf(company: dict, payroll: dict, calc: dict) -> bytes:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ImportError as exc:
+        raise RuntimeError("PD7A PDF requires reportlab. Install requirements and restart the app.") from exc
+
+    income_tax = round(calc["tax_fed"] + calc["tax_prov"], 2)
+    employee_cpp = round(calc["cpp"], 2)
+    employer_cpp = round(calc["employer_cpp"], 2)
+    employee_ei = round(calc["ei"], 2)
+    employer_ei = round(calc["employer_ei"], 2)
+    total_cpp = round(employee_cpp + employer_cpp, 2)
+    total_ei = round(employee_ei + employer_ei, 2)
+    total_remittance = round(income_tax + total_cpp + total_ei, 2)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=0.65 * inch,
+        rightMargin=0.65 * inch,
+        topMargin=0.65 * inch,
+        bottomMargin=0.65 * inch,
+    )
+    styles = getSampleStyleSheet()
+    navy = colors.HexColor("#16324F")
+    teal = colors.HexColor("#087F8C")
+    pale_blue = colors.HexColor("#EEF3F8")
+    pale_teal = colors.HexColor("#EAF6F7")
+    line = colors.HexColor("#D5DEE8")
+    muted = colors.HexColor("#64748B")
+
+    employer = Paragraph(
+        f"<font color='#FFFFFF' size='16'><b>{company['name']}</b></font><br/>"
+        f"<font color='#DDE8F1' size='8'>{company['address']}<br/>"
+        f"Payroll account: {company.get('payroll_account') or 'Not entered'}</font>",
+        styles["Normal"],
+    )
+    title_label = Paragraph(
+        "<para alignment='right'><font color='#D8F2F3' size='8'><b>PAYROLL REMITTANCE</b></font></para>",
+        styles["Normal"],
+    )
+    title_main = Paragraph(
+        "<para alignment='right' leading='20'><font color='#FFFFFF' size='18'><b>PD7A SUMMARY</b></font></para>",
+        styles["Normal"],
+    )
+    title = Table([[title_label], [title_main]], colWidths=[2.52 * inch])
+    title.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+    header = Table([[employer, title]], colWidths=[4.4 * inch, 2.8 * inch])
+    header.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, 0), navy),
+                ("BACKGROUND", (1, 0), (1, 0), teal),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 13),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 13),
+            ]
+        )
+    )
+
+    details = [
+        ["REMITTANCE PERIOD", f"{payroll['pay_start']} to {payroll['pay_end']}"],
+        ["PAY DATE", str(payroll["pay_date"])],
+        ["EMPLOYEES PAID", "1"],
+        ["GROSS PAYROLL", f"${calc['gross']:,.2f}"],
+    ]
+    details_table = Table(details, colWidths=[1.75 * inch, 5.45 * inch])
+    details_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), pale_blue),
+                ("GRID", (0, 0), (-1, -1), 0.35, line),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("TEXTCOLOR", (0, 0), (0, -1), muted),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+
+    rows = [
+        ["SOURCE DEDUCTION", "EMPLOYEE", "EMPLOYER", "TOTAL"],
+        ["Income tax", f"${income_tax:,.2f}", "-", f"${income_tax:,.2f}"],
+        ["CPP contributions", f"${employee_cpp:,.2f}", f"${employer_cpp:,.2f}", f"${total_cpp:,.2f}"],
+        ["EI premiums", f"${employee_ei:,.2f}", f"${employer_ei:,.2f}", f"${total_ei:,.2f}"],
+        ["TOTAL REMITTANCE DUE", "", "", f"${total_remittance:,.2f}"],
+    ]
+    remittance_table = Table(rows, colWidths=[3.0 * inch, 1.4 * inch, 1.4 * inch, 1.4 * inch])
+    remittance_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), navy),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 8),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 1), (-1, -1), 9),
+                ("GRID", (0, 0), (-1, -1), 0.35, line),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F7F9FB")]),
+                ("BACKGROUND", (0, -1), (-1, -1), pale_teal),
+                ("TEXTCOLOR", (0, -1), (-1, -1), teal),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, -1), (-1, -1), 11),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ]
+        )
+    )
+    note = Paragraph(
+        "<font color='#64748B' size='8'>PD7A-style summary for recordkeeping and CRA remittance entry. "
+        "Review the amounts against CRA payroll records before making payment.</font>",
+        styles["Normal"],
+    )
+    doc.build([header, Spacer(1, 12), details_table, Spacer(1, 14), remittance_table, Spacer(1, 12), note])
+    return buffer.getvalue()
+
+
 def uploaded_enrichment_temp(uploaded_file) -> Path | None:
     if uploaded_file is None:
         return None
@@ -1237,10 +1379,17 @@ with payroll_tab:
         )
         pd7a_bytes = build_pd7a_excel(saved["company"], saved["payroll"], calc)
         st.download_button(
-            "Download PD7A remittance summary",
+            "Download PD7A summary Excel",
             data=pd7a_bytes,
             file_name=f"PD7A_Remittance_{saved['payroll']['pay_date']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        pd7a_pdf_bytes = build_pd7a_pdf(saved["company"], saved["payroll"], calc)
+        st.download_button(
+            "Download PD7A summary PDF",
+            data=pd7a_pdf_bytes,
+            file_name=f"PD7A_Remittance_{saved['payroll']['pay_date']}.pdf",
+            mime="application/pdf",
         )
         register_bytes = export_payroll_register(saved["updated_register"])
         st.download_button(
