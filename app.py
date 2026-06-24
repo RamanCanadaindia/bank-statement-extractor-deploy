@@ -1343,21 +1343,21 @@ with payroll_tab:
             pd7a_template_replacements(saved["company"], saved["payroll"], calc),
         )
         st.download_button(
-            "Download modern payslip Word",
+            "Download payslip Word",
             data=payslip_docx,
             file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             type="primary",
         )
         st.download_button(
-            "Download PD7A Word template",
+            "Download PD7A Word",
             data=pd7a_docx,
             file_name=f"PD7A_Remittance_{saved['payroll']['pay_date']}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         pdf_bytes = build_payslip_pdf(saved["company"], saved["employee"], pdf_payroll, calc)
         st.download_button(
-            "Download modern payslip PDF",
+            "Download payslip PDF",
             data=pdf_bytes,
             file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.pdf",
             mime="application/pdf",
