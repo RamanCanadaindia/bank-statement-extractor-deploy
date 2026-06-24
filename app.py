@@ -553,65 +553,133 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
         raise RuntimeError("Payslip PDF requires reportlab. Install requirements and restart the app.") from exc
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=0.6 * inch, leftMargin=0.6 * inch)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=0.55 * inch,
+        leftMargin=0.55 * inch,
+        topMargin=0.55 * inch,
+        bottomMargin=0.55 * inch,
+    )
     styles = getSampleStyleSheet()
-    story = [
-        Paragraph(company["name"], styles["Title"]),
-        Paragraph(company["address"], styles["Normal"]),
-        Spacer(1, 12),
-        Paragraph("Payslip", styles["Heading2"]),
-    ]
+    navy = colors.HexColor("#16324F")
+    teal = colors.HexColor("#087F8C")
+    pale_blue = colors.HexColor("#EEF3F8")
+    pale_teal = colors.HexColor("#EAF6F7")
+    line = colors.HexColor("#D5DEE8")
+    muted = colors.HexColor("#64748B")
+
+    company_block = Paragraph(
+        f"<font color='#FFFFFF' size='16'><b>{company['name']}</b></font><br/>"
+        f"<font color='#DDE8F1' size='8'>{company['address']}<br/>{company.get('phone', '')}</font>",
+        styles["Normal"],
+    )
+    net_block = Paragraph(
+        f"<para alignment='right'><font color='#D8F2F3' size='8'><b>PAY STATEMENT</b></font><br/>"
+        f"<font color='#FFFFFF' size='20'><b>${payroll['net']:,.2f}</b></font><br/>"
+        f"<font color='#D8F2F3' size='8'><b>NET PAY</b></font></para>",
+        styles["Normal"],
+    )
+    header = Table([[company_block, net_block]], colWidths=[4.55 * inch, 2.75 * inch])
+    header.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, 0), navy),
+                ("BACKGROUND", (1, 0), (1, 0), teal),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 12),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ]
+        )
+    )
 
     details = [
-        ["Employee", employee["name"], "Pay date", str(payroll["pay_date"])],
-        ["Position", employee["position"], "Pay period", f"{payroll['pay_start']} to {payroll['pay_end']}"],
-        ["Frequency", payroll["frequency"], "Province", employee.get("province", "British Columbia")],
+        ["EMPLOYEE", employee["name"], "PAY PERIOD", f"{payroll['pay_start']} to {payroll['pay_end']}"],
+        ["POSITION", employee["position"] or "-", "PAY DATE", str(payroll["pay_date"])],
+        ["PROVINCE", employee.get("province", "British Columbia"), "FREQUENCY", payroll["frequency"]],
     ]
-    earnings = [
-        ["Earnings", "Amount"],
-        ["Regular pay", calc["regular_pay"]],
-        ["Overtime pay", calc["overtime_pay"]],
-        ["Stat pay", payroll["stat_pay"]],
-        ["Vacation pay", payroll["vacation_pay"]],
-        ["Bonus", payroll["bonus"]],
-        ["Gross pay", calc["gross"]],
-        ["Taxable income for tax", calc.get("taxable_income_for_tax", calc["gross"])],
-    ]
-    deductions = [
-        ["Deductions", "Amount"],
-        ["Before-tax deductions", payroll.get("before_tax_deductions", 0.0)],
-        ["CPP", payroll["cpp"]],
-        ["EI", payroll["ei"]],
-        ["Federal tax", payroll["tax_fed"]],
-        ["Provincial tax", payroll["tax_prov"]],
-        ["Other deductions", payroll["other_deductions"]],
-        ["Total deductions", payroll["total_deductions"]],
-        ["Reimbursements", payroll["reimbursements"]],
-        ["Net pay", payroll["net"]],
-    ]
-
-    def money_table(rows: list[list]) -> Table:
-        formatted = [[row[0], row[1] if isinstance(row[1], str) else f"${row[1]:,.2f}"] for row in rows]
-        table = Table(formatted, colWidths=[3.0 * inch, 2.0 * inch])
-        table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF7")),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CAD2E0")),
-                    ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ]
-            )
+    details_table = Table(details, colWidths=[0.85 * inch, 2.35 * inch, 0.85 * inch, 3.25 * inch])
+    details_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), pale_blue),
+                ("GRID", (0, 0), (-1, -1), 0.35, line),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("TEXTCOLOR", (0, 0), (0, -1), muted),
+                ("TEXTCOLOR", (2, 0), (2, -1), muted),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
         )
-        return table
+    )
 
-    details_table = Table(details, colWidths=[1.2 * inch, 2.3 * inch, 1.2 * inch, 2.0 * inch])
-    details_table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CAD2E0"))]))
-    story.extend([details_table, Spacer(1, 14), money_table(earnings), Spacer(1, 14), money_table(deductions)])
-    story.append(Spacer(1, 12))
-    story.append(Paragraph("Review payroll deductions against CRA PDOC before filing remittances.", styles["Italic"]))
+    earning_rows = [
+        ("Regular pay", calc["regular_pay"]),
+        ("Salary amount", payroll["salary_amount"]),
+        ("Overtime pay", calc["overtime_pay"]),
+        ("Stat holiday pay", payroll["stat_pay"]),
+        ("Sick pay", payroll["sick_pay"]),
+        ("Vacation pay", payroll["vacation_pay"]),
+        ("Bonus/other taxable", payroll["bonus"]),
+        ("TOTAL GROSS", calc["gross"]),
+    ]
+    deduction_rows = [
+        ("Before-tax deductions", payroll.get("before_tax_deductions", 0.0)),
+        ("CPP", payroll["cpp"]),
+        ("EI", payroll["ei"]),
+        ("Federal tax", payroll["tax_fed"]),
+        ("Provincial tax", payroll["tax_prov"]),
+        ("Other deductions", payroll["other_deductions"]),
+        ("TOTAL DEDUCTIONS", payroll["total_deductions"]),
+        ("NET PAY", payroll["net"]),
+    ]
+    comparison = [["EARNINGS", "CURRENT", "DEDUCTIONS", "CURRENT"]]
+    for earning, deduction in zip(earning_rows, deduction_rows):
+        comparison.append([earning[0], f"${earning[1]:,.2f}", deduction[0], f"${deduction[1]:,.2f}"])
+    comparison_table = Table(comparison, colWidths=[2.25 * inch, 1.25 * inch, 2.45 * inch, 1.35 * inch])
+    comparison_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (1, 0), navy),
+                ("BACKGROUND", (2, 0), (3, 0), teal),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 8),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("ALIGN", (3, 0), (3, -1), "RIGHT"),
+                ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+                ("FONTNAME", (2, 1), (2, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 1), (-1, -1), 8.5),
+                ("GRID", (0, 0), (-1, -1), 0.35, line),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F7F9FB")]),
+                ("BACKGROUND", (0, -1), (1, -1), pale_blue),
+                ("BACKGROUND", (2, -1), (3, -1), pale_teal),
+                ("TEXTCOLOR", (0, -1), (1, -1), navy),
+                ("TEXTCOLOR", (2, -1), (3, -1), teal),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, -1), (-1, -1), 9.5),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+
+    note = Paragraph(
+        "<font color='#64748B' size='8'>This statement summarizes earnings and deductions for the pay period. "
+        "Review payroll deductions against CRA PDOC before remitting or filing.</font>",
+        styles["Normal"],
+    )
+    story = [header, Spacer(1, 10), details_table, Spacer(1, 12), comparison_table, Spacer(1, 10), note]
     doc.build(story)
     return buffer.getvalue()
 
@@ -1257,7 +1325,7 @@ with payroll_tab:
             pd7a_template_replacements(saved["company"], saved["payroll"], calc),
         )
         st.download_button(
-            "Download payslip Word template",
+            "Download modern payslip Word",
             data=payslip_docx,
             file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1271,7 +1339,7 @@ with payroll_tab:
         )
         pdf_bytes = build_payslip_pdf(saved["company"], saved["employee"], pdf_payroll, calc)
         st.download_button(
-            "Download payslip PDF",
+            "Download modern payslip PDF",
             data=pdf_bytes,
             file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.pdf",
             mime="application/pdf",
