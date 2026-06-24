@@ -574,11 +574,29 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
         f"<font color='#DDE8F1' size='8'>{company['address']}<br/>{company.get('phone', '')}</font>",
         styles["Normal"],
     )
-    net_block = Paragraph(
-        f"<para alignment='right'><font color='#D8F2F3' size='8'><b>PAY STATEMENT</b></font><br/>"
-        f"<font color='#FFFFFF' size='20'><b>${payroll['net']:,.2f}</b></font><br/>"
-        f"<font color='#D8F2F3' size='8'><b>NET PAY</b></font></para>",
+    net_label = Paragraph(
+        "<para alignment='right'><font color='#D8F2F3' size='8'><b>PAY STATEMENT</b></font></para>",
         styles["Normal"],
+    )
+    net_amount = Paragraph(
+        f"<para alignment='right' leading='22'><font color='#FFFFFF' size='20'><b>${payroll['net']:,.2f}</b></font></para>",
+        styles["Normal"],
+    )
+    net_caption = Paragraph(
+        "<para alignment='right'><font color='#D8F2F3' size='8'><b>NET PAY</b></font></para>",
+        styles["Normal"],
+    )
+    net_block = Table([[net_label], [net_amount], [net_caption]], colWidths=[2.47 * inch])
+    net_block.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ]
+        )
     )
     header = Table([[company_block, net_block]], colWidths=[4.55 * inch, 2.75 * inch])
     header.setStyle(
