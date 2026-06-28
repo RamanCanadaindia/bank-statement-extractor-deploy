@@ -70,6 +70,10 @@ def require_password() -> None:
 
     st.title("Raman Financial Services")
     st.subheader("Accounting Tools")
+    st.caption(
+        "Bank extraction, payroll, financial statements, mortgage qualification, "
+        "and real estate investment analysis."
+    )
     st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
     password = st.text_input("Password", type="password")
     if st.button("Sign in", type="primary"):
