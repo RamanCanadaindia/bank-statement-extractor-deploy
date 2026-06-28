@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib
 import hmac
 import io
@@ -206,6 +207,120 @@ st.markdown(
         text-transform: uppercase;
         margin-bottom: 0.65rem;
     }
+    .public-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.1rem 0 1rem;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid var(--rfs-border);
+    }
+    .public-nav-links {display: flex; align-items: center; gap: 1.15rem;}
+    .public-nav a {
+        color: #42526a;
+        font-size: 0.84rem;
+        font-weight: 600;
+        text-decoration: none;
+    }
+    .public-nav a:hover {color: var(--rfs-blue);}
+    .public-nav .public-login {
+        padding: 0.6rem 0.9rem;
+        border-radius: 6px;
+        background: var(--rfs-blue);
+        color: #ffffff;
+    }
+    .public-hero {
+        min-height: 520px;
+        display: flex;
+        align-items: center;
+        padding: 3rem;
+        border: 1px solid var(--rfs-border);
+        border-radius: 8px;
+        background-position: center;
+        background-size: cover;
+        overflow: hidden;
+    }
+    .public-hero-copy {width: min(47%, 540px);}
+    .public-hero h1 {
+        max-width: 520px;
+        margin: 0 0 1rem;
+        font-size: 3rem !important;
+        line-height: 1.05;
+    }
+    .public-hero p {
+        max-width: 510px;
+        margin: 0 0 1.5rem;
+        color: #34455d;
+        font-size: 1rem;
+        line-height: 1.65;
+    }
+    .public-actions {display: flex; flex-wrap: wrap; gap: 0.7rem;}
+    .public-actions a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.75rem;
+        padding: 0.65rem 1rem;
+        border: 1px solid var(--rfs-border);
+        border-radius: 6px;
+        background: #ffffff;
+        color: var(--rfs-navy);
+        font-size: 0.86rem;
+        font-weight: 700;
+        text-decoration: none;
+    }
+    .public-actions a:first-child {
+        border-color: var(--rfs-blue);
+        background: var(--rfs-blue);
+        color: #ffffff;
+    }
+    .public-section {padding: 3rem 0 1rem;}
+    .public-section-head {max-width: 660px; margin-bottom: 1.4rem;}
+    .public-section-head h2 {margin: 0 0 0.45rem; font-size: 1.65rem !important;}
+    .public-section-head p {margin: 0; color: var(--rfs-muted);}
+    .public-card {
+        min-height: 180px;
+        padding: 1.25rem;
+        border: 1px solid var(--rfs-border);
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 1px 3px rgba(15, 35, 65, 0.04);
+    }
+    .public-card-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        margin-bottom: 1rem;
+        border-radius: 6px;
+        background: var(--rfs-soft-blue);
+        color: var(--rfs-blue-dark);
+        font-size: 0.8rem;
+        font-weight: 800;
+    }
+    .public-card h3 {margin: 0 0 0.45rem;}
+    .public-card p {margin: 0; color: var(--rfs-muted); font-size: 0.88rem; line-height: 1.55;}
+    .public-band {
+        margin-top: 2.5rem;
+        padding: 1.6rem 1.8rem;
+        border: 1px solid #bcd0ea;
+        border-radius: 8px;
+        background: #edf5ff;
+    }
+    .public-band h2 {margin: 0 0 0.45rem;}
+    .public-band p {max-width: 850px; margin: 0; color: #42526a;}
+    .public-footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: 3rem;
+        padding: 1.4rem 0 0;
+        border-top: 1px solid var(--rfs-border);
+        color: var(--rfs-muted);
+        font-size: 0.8rem;
+    }
     .status-ok {padding: 12px 14px; border-left: 4px solid #17864b; background: #eff8f3;}
     .status-error {padding: 12px 14px; border-left: 4px solid #c73838; background: #fff2f2;}
 
@@ -214,12 +329,107 @@ st.markdown(
         .rfs-topbar {align-items: flex-start;}
         .rfs-status {display: none;}
         .rfs-card-copy {min-height: 0;}
+        .public-nav-links a:not(.public-login) {display: none;}
+        .public-hero {min-height: 570px; align-items: flex-start; padding: 2rem 1.25rem; background-position: 66% center;}
+        .public-hero-copy {width: 100%; padding: 0.9rem; border-radius: 7px; background: rgba(255,255,255,0.92);}
+        .public-hero h1 {font-size: 2.15rem !important;}
+        .public-footer {flex-direction: column;}
         [data-testid="column"] {min-width: 100% !important;}
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+def render_public_home() -> None:
+    hero_path = APP_DIR / "assets" / "accounting-workspace-hero.png"
+    hero_data = base64.b64encode(hero_path.read_bytes()).decode("ascii")
+
+    st.markdown(
+        '<nav class="public-nav">'
+        '<div class="rfs-topbrand"><span class="rfs-logo">R</span>'
+        "<span>Raman Financial Services</span></div>"
+        '<div class="public-nav-links">'
+        '<a href="?view=home">Home</a>'
+        '<a href="#public-tools">Tools</a>'
+        '<a href="#public-workflow">Workflow</a>'
+        '<a class="public-login" href="?view=workspace">Open secure tools</a>'
+        "</div></nav>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<section class="public-hero" style="background-image:url(data:image/png;base64,{hero_data})">'
+        '<div class="public-hero-copy">'
+        '<span class="rfs-kicker">Accounting and financial tools</span>'
+        "<h1>Financial work, organized.</h1>"
+        "<p>Prepare bank transactions, annual workbooks, payroll records, compiled financial "
+        "statements, mortgage estimates, and real estate investment analysis in one workspace.</p>"
+        '<div class="public-actions">'
+        '<a href="?view=workspace">Open secure tools</a>'
+        '<a href="#public-tools">Explore tools</a>'
+        "</div></div></section>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<section class="public-section" id="public-tools">'
+        '<div class="public-section-head"><span class="rfs-kicker">Tools</span>'
+        "<h2>One workspace for recurring financial work</h2>"
+        "<p>Move from source documents to reviewable working files without changing systems.</p>"
+        "</div></section>",
+        unsafe_allow_html=True,
+    )
+    public_tools = [
+        ("01", "Statement extraction", "Convert supported bank and credit-card statements into organized transactions."),
+        ("02", "Annual workbooks", "Combine verified monthly files while preserving statement order and separation."),
+        ("03", "Payroll records", "Calculate payroll, update annual registers, and prepare employee payslips."),
+        ("04", "Financial statements", "Create reviewable draft statements from Schedule 100 and Schedule 125 PDFs."),
+        ("05", "Mortgage planning", "Estimate mortgage capacity using the Gross Debt Service calculation."),
+        ("06", "Investment analysis", "Compare property costs, cash flow, rents, and supporting market inputs."),
+    ]
+    for row_start in range(0, len(public_tools), 3):
+        columns = st.columns(3)
+        for column, (number, title, copy) in zip(columns, public_tools[row_start : row_start + 3]):
+            with column:
+                st.markdown(
+                    f'<article class="public-card"><span class="public-card-number">{number}</span>'
+                    f"<h3>{title}</h3><p>{copy}</p></article>",
+                    unsafe_allow_html=True,
+                )
+
+    st.markdown(
+        '<section class="public-section" id="public-workflow">'
+        '<div class="public-section-head"><span class="rfs-kicker">Workflow</span>'
+        "<h2>Built around review, not blind automation</h2>"
+        "<p>Each workflow keeps the original documents central to the accounting review.</p>"
+        "</div></section>",
+        unsafe_allow_html=True,
+    )
+    workflow_columns = st.columns(3)
+    workflow_steps = [
+        ("1", "Prepare", "Upload statements, schedules, workbooks, or property inputs."),
+        ("2", "Review", "Reconcile totals and compare generated records with source documents."),
+        ("3", "Export", "Download the completed Excel, PDF, or Word working file."),
+    ]
+    for column, (number, title, copy) in zip(workflow_columns, workflow_steps):
+        with column:
+            st.markdown(
+                f'<article class="public-card"><span class="public-card-number">{number}</span>'
+                f"<h3>{title}</h3><p>{copy}</p></article>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown(
+        '<section class="public-band"><h2>Public website. Protected financial workspace.</h2>'
+        "<p>This home page is open to everyone. Bank statements, payroll, financial statements, "
+        "mortgage calculations, and investment tools remain behind the workspace password.</p>"
+        '<div class="public-actions" style="margin-top:1rem">'
+        '<a href="?view=workspace">Sign in to the workspace</a></div></section>'
+        '<footer class="public-footer"><strong>Raman Financial Services</strong>'
+        "<span>Financial tools for organized, reviewable work.</span></footer>",
+        unsafe_allow_html=True,
+    )
 
 
 def require_password() -> None:
@@ -262,9 +472,14 @@ def require_password() -> None:
                     st.rerun()
                 else:
                     st.error("Incorrect password.")
-            st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
+            st.markdown("[Back to public home](?view=home)")
     st.stop()
 
+
+requested_view = str(st.query_params.get("view", "home")).lower()
+if requested_view != "workspace":
+    render_public_home()
+    st.stop()
 
 require_password()
 
@@ -858,6 +1073,11 @@ def go_to_page(page: str) -> None:
     st.session_state["main_nav"] = page
 
 
+def sign_out() -> None:
+    st.session_state.pop("authenticated", None)
+    st.query_params["view"] = "home"
+
+
 st.sidebar.markdown(
     '<div class="rfs-brand"><span class="rfs-logo">R</span>'
     "<span>Raman Financial Services</span></div>",
@@ -875,6 +1095,8 @@ st.sidebar.markdown(
     "Review generated records before filing, remitting, lending, or investment decisions.</div>",
     unsafe_allow_html=True,
 )
+st.sidebar.markdown("[Public home](?view=home)")
+st.sidebar.button("Sign out", on_click=sign_out, use_container_width=True)
 
 st.markdown(
     '<div class="rfs-topbar"><div class="rfs-topbrand">'

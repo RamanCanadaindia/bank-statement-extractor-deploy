@@ -7,6 +7,10 @@ The authenticated workspace uses a responsive dashboard, persistent tool
 navigation, and separate pages for each accounting, mortgage, and real estate
 workflow.
 
+The root URL is a public home page. Selecting **Open secure tools** changes to
+the protected workspace route, where the configured `APP_PASSWORD` is required
+before any financial tool can be opened.
+
 ## Run locally
 
 ```powershell
