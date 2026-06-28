@@ -224,20 +224,36 @@ def require_password() -> None:
     if not expected or st.session_state.get("authenticated"):
         return
 
-    st.title("Raman Financial Services")
-    st.subheader("Accounting Tools")
-    st.caption(
-        "Bank extraction, payroll, financial statements, mortgage qualification, "
-        "and real estate investment analysis."
+    st.markdown(
+        '<div class="rfs-topbar"><div class="rfs-topbrand">'
+        '<span class="rfs-logo">R</span><span>Raman Financial Services</span></div>'
+        '<span class="rfs-status">Secure workspace</span></div>',
+        unsafe_allow_html=True,
     )
-    st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
-    password = st.text_input("Password", type="password")
-    if st.button("Sign in", type="primary"):
-        if hmac.compare_digest(password, expected):
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
+    intro_col, login_col = st.columns([1.35, 0.85], gap="large")
+    with intro_col:
+        st.markdown('<span class="rfs-kicker">Accounting workspace</span>', unsafe_allow_html=True)
+        st.title("Work with financial records in one secure place.")
+        st.markdown(
+            "Bank extraction, annual workbooks, payroll, financial statements, "
+            "mortgage qualification, and real estate investment analysis."
+        )
+        benefit_cols = st.columns(3)
+        benefit_cols[0].markdown("**Private**\n\nPassword-protected access")
+        benefit_cols[1].markdown("**Practical**\n\nFiles ready for review")
+        benefit_cols[2].markdown("**Connected**\n\nOne consistent workspace")
+    with login_col:
+        with st.container(border=True):
+            st.subheader("Sign in")
+            st.caption("Enter your workspace password.")
+            password = st.text_input("Password", type="password")
+            if st.button("Sign in", type="primary", use_container_width=True):
+                if hmac.compare_digest(password, expected):
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect password.")
+            st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
     st.stop()
 
 
