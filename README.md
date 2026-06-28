@@ -3,6 +3,10 @@
 A Streamlit website for bank-statement extraction, annual transaction workbooks,
 payroll records, and draft compiled financial statements.
 
+The authenticated workspace uses a responsive dashboard, persistent tool
+navigation, and separate pages for each accounting, mortgage, and real estate
+workflow.
+
 ## Run locally
 
 ```powershell

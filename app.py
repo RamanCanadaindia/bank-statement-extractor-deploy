@@ -40,17 +40,173 @@ importlib.reload(mortgage)
 st.set_page_config(
     page_title="Raman Financial Services - Accounting Tools",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
     """
     <style>
-    .block-container {max-width: 1120px; padding-top: 2rem; padding-bottom: 4rem;}
-    h1, h2, h3 {letter-spacing: 0;}
-    [data-testid="stMetric"] {border: 1px solid #d9dee7; padding: 14px; border-radius: 6px;}
+    :root {
+        --rfs-navy: #0b1f3a;
+        --rfs-blue: #1268df;
+        --rfs-blue-dark: #0b54bd;
+        --rfs-soft-blue: #eaf3ff;
+        --rfs-bg: #f5f7fb;
+        --rfs-border: #dfe5ee;
+        --rfs-muted: #64748b;
+        --rfs-green: #12805c;
+    }
+    html, body, [class*="css"] {font-family: Inter, "Segoe UI", Arial, sans-serif;}
+    .stApp {background: var(--rfs-bg); color: var(--rfs-navy);}
+    [data-testid="stHeader"] {background: rgba(245, 247, 251, 0.92);}
+    .block-container {max-width: 1280px; padding: 1.25rem 2rem 4rem;}
+    h1, h2, h3 {letter-spacing: 0; color: var(--rfs-navy);}
+    h1 {font-size: 1.75rem !important;}
+    h2 {font-size: 1.35rem !important;}
+    h3 {font-size: 1.05rem !important;}
+    p, label, [data-testid="stCaptionContainer"] {color: #42526a;}
+
+    [data-testid="stSidebar"] {
+        background: #ffffff;
+        border-right: 1px solid var(--rfs-border);
+    }
+    [data-testid="stSidebar"] > div:first-child {padding-top: 1rem;}
+    [data-testid="stSidebar"] [role="radiogroup"] {gap: 0.2rem;}
+    [data-testid="stSidebar"] [role="radiogroup"] label {
+        min-height: 2.65rem;
+        padding: 0.62rem 0.72rem;
+        border-radius: 7px;
+        transition: background 120ms ease;
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label:hover {background: #f3f7fd;}
+    [data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {
+        background: var(--rfs-soft-blue);
+        color: var(--rfs-blue-dark);
+        font-weight: 650;
+    }
+    [data-testid="stSidebar"] [role="radiogroup"] label > div:first-child {display: none;}
+
+    .rfs-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.2rem 0.25rem 1.2rem;
+        font-weight: 750;
+        color: var(--rfs-navy);
+    }
+    .rfs-logo {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 6px;
+        background: var(--rfs-blue);
+        color: white;
+        font-size: 1rem;
+        font-weight: 800;
+    }
+    .rfs-nav-label {
+        margin: 0.6rem 0.25rem 0.3rem;
+        color: #8a98aa;
+        font-size: 0.7rem;
+        font-weight: 750;
+        text-transform: uppercase;
+    }
+    .rfs-help {
+        margin-top: 1.2rem;
+        padding: 0.9rem;
+        border: 1px solid var(--rfs-border);
+        border-radius: 8px;
+        background: #f8fafc;
+        color: var(--rfs-muted);
+        font-size: 0.8rem;
+        line-height: 1.45;
+    }
+    .rfs-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.2rem 0 1rem;
+        border-bottom: 1px solid var(--rfs-border);
+        margin-bottom: 1.25rem;
+    }
+    .rfs-topbrand {display: flex; align-items: center; gap: 0.65rem; font-weight: 750;}
+    .rfs-status {
+        padding: 0.35rem 0.65rem;
+        border: 1px solid #b9dfd0;
+        border-radius: 999px;
+        background: #edf9f4;
+        color: var(--rfs-green);
+        font-size: 0.75rem;
+        font-weight: 650;
+    }
+    .rfs-pagehead {margin-bottom: 1.2rem;}
+    .rfs-pagehead h1 {margin: 0; font-size: 1.65rem !important;}
+    .rfs-pagehead p {margin: 0.28rem 0 0; color: var(--rfs-muted);}
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: #ffffff;
+        border-color: var(--rfs-border) !important;
+        border-radius: 8px !important;
+        box-shadow: 0 1px 3px rgba(15, 35, 65, 0.04);
+    }
+    [data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid var(--rfs-border);
+        padding: 14px;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(15, 35, 65, 0.04);
+    }
+    [data-testid="stFileUploaderDropzone"] {
+        min-height: 9rem;
+        background: #f8fbff;
+        border: 1px dashed #a9bdd8;
+        border-radius: 8px;
+    }
+    .stButton > button, .stDownloadButton > button, [data-testid="stFormSubmitButton"] button {
+        min-height: 2.55rem;
+        border-radius: 6px;
+        font-weight: 650;
+    }
+    .stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"],
+    [data-testid="stFormSubmitButton"] button[kind="primary"] {
+        background: var(--rfs-blue);
+        border-color: var(--rfs-blue);
+    }
+    .stButton > button[kind="primary"]:hover, .stDownloadButton > button[kind="primary"]:hover {
+        background: var(--rfs-blue-dark);
+        border-color: var(--rfs-blue-dark);
+    }
+    [data-testid="stDataFrame"] {
+        border: 1px solid var(--rfs-border);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .rfs-card-title {font-weight: 750; color: var(--rfs-navy); margin-bottom: 0.25rem;}
+    .rfs-card-copy {min-height: 3.2rem; color: var(--rfs-muted); font-size: 0.86rem;}
+    .rfs-kicker {
+        display: inline-block;
+        color: var(--rfs-blue-dark);
+        background: var(--rfs-soft-blue);
+        border-radius: 4px;
+        padding: 0.22rem 0.42rem;
+        font-size: 0.68rem;
+        font-weight: 750;
+        text-transform: uppercase;
+        margin-bottom: 0.65rem;
+    }
     .status-ok {padding: 12px 14px; border-left: 4px solid #17864b; background: #eff8f3;}
     .status-error {padding: 12px 14px; border-left: 4px solid #c73838; background: #fff2f2;}
+
+    @media (max-width: 768px) {
+        .block-container {padding: 1rem 0.9rem 3rem;}
+        .rfs-topbar {align-items: flex-start;}
+        .rfs-status {display: none;}
+        .rfs-card-copy {min-height: 0;}
+        [data-testid="column"] {min-width: 100% !important;}
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -651,24 +807,126 @@ def real_estate_excel_bytes(database: pd.DataFrame, top: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 
-st.title("Raman Financial Services")
-st.subheader("Accounting Tools")
-st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
-st.caption("Accounting, mortgage qualification, and real estate investment tools.")
+NAV_ITEMS = [
+    "Dashboard",
+    "Extract statements",
+    "Build annual file",
+    "Payroll template",
+    "Financial statements",
+    "Maximum mortgage",
+    "Real estate agent",
+    "Guide",
+]
+PAGE_COPY = {
+    "Dashboard": "Choose a workspace and continue your accounting work.",
+    "Extract statements": "Upload bank statements and review extracted transactions.",
+    "Build annual file": "Combine verified monthly workbooks in statement order.",
+    "Payroll template": "Calculate payroll and maintain the annual payroll register.",
+    "Financial statements": "Prepare draft compiled financial statements from T2 schedules.",
+    "Maximum mortgage": "Estimate mortgage capacity under the Gross Debt Service ratio.",
+    "Real estate agent": "Compare listings, financing costs, cash flow, and investment signals.",
+    "Guide": "File naming, review steps, and operating notes.",
+}
 
-extract_tab, annual_tab, payroll_tab, financial_tab, mortgage_tab, investment_tab, guide_tab = st.tabs(
-    [
-        "Extract statements",
-        "Build annual file",
-        "Payroll template",
-        "Financial statements",
-        "Maximum mortgage",
-        "Real estate agent",
-        "Guide",
-    ]
+
+def go_to_page(page: str) -> None:
+    st.session_state["main_nav"] = page
+
+
+st.sidebar.markdown(
+    '<div class="rfs-brand"><span class="rfs-logo">R</span>'
+    "<span>Raman Financial Services</span></div>",
+    unsafe_allow_html=True,
+)
+st.sidebar.markdown('<div class="rfs-nav-label">Accounting tools</div>', unsafe_allow_html=True)
+selected_page = st.sidebar.radio(
+    "Accounting tools",
+    NAV_ITEMS,
+    key="main_nav",
+    label_visibility="collapsed",
+)
+st.sidebar.markdown(
+    '<div class="rfs-help"><strong>Secure workspace</strong><br>'
+    "Review generated records before filing, remitting, lending, or investment decisions.</div>",
+    unsafe_allow_html=True,
 )
 
-with extract_tab:
+st.markdown(
+    '<div class="rfs-topbar"><div class="rfs-topbrand">'
+    '<span class="rfs-logo">R</span><span>Raman Financial Services</span></div>'
+    '<span class="rfs-status">Secure session</span></div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f'<div class="rfs-pagehead"><h1>{selected_page}</h1>'
+    f"<p>{PAGE_COPY[selected_page]}</p></div>",
+    unsafe_allow_html=True,
+)
+
+if selected_page == "Dashboard":
+    st.markdown('<span class="rfs-kicker">Workspace</span>', unsafe_allow_html=True)
+    overview_cols = st.columns(3)
+    overview_cols[0].metric("Accounting workspaces", "6")
+    overview_cols[1].metric("Supported statement sources", "8")
+    overview_cols[2].metric("Output formats", "Excel, PDF, Word")
+
+    st.subheader("Tools")
+    tool_cards = [
+        (
+            "Extract statements",
+            "Bank transactions",
+            "Convert monthly bank and credit-card statements into reviewable transactions.",
+        ),
+        (
+            "Build annual file",
+            "Annual bookkeeping",
+            "Combine verified monthly workbooks without changing the statement order.",
+        ),
+        (
+            "Payroll template",
+            "Payroll records",
+            "Calculate a pay period and add it to the employee's annual register.",
+        ),
+        (
+            "Financial statements",
+            "Compilation",
+            "Create draft statements from searchable Schedule 100 and Schedule 125 PDFs.",
+        ),
+        (
+            "Maximum mortgage",
+            "Mortgage planning",
+            "Estimate maximum mortgage capacity using the GDS calculation.",
+        ),
+        (
+            "Real estate agent",
+            "Investment analysis",
+            "Rank property listings using financing, rent, comparable, and location inputs.",
+        ),
+    ]
+    for row_start in range(0, len(tool_cards), 3):
+        card_columns = st.columns(3)
+        for column, (page, category, copy) in zip(card_columns, tool_cards[row_start : row_start + 3]):
+            with column:
+                with st.container(border=True):
+                    st.markdown(f'<span class="rfs-kicker">{category}</span>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="rfs-card-title">{page}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="rfs-card-copy">{copy}</div>', unsafe_allow_html=True)
+                    st.button(
+                        "Open tool",
+                        key=f"dashboard_{page}",
+                        on_click=go_to_page,
+                        args=(page,),
+                        use_container_width=True,
+                    )
+
+    with st.container(border=True):
+        st.subheader("Review workflow")
+        review_cols = st.columns(3)
+        review_cols[0].markdown("**1. Process**\n\nUpload or enter the source records.")
+        review_cols[1].markdown("**2. Reconcile**\n\nCompare results with the original documents.")
+        review_cols[2].markdown("**3. Export**\n\nDownload the completed working file.")
+
+if selected_page == "Extract statements":
     left, right = st.columns([1, 2])
     with left:
         selected_bank = st.selectbox("Bank", SUPPORTED_BANKS)
@@ -752,7 +1010,7 @@ with extract_tab:
                 st.error(f"{len(failures)} file(s) need review.")
                 st.dataframe(pd.DataFrame(failures), use_container_width=True, hide_index=True)
 
-with annual_tab:
+if selected_page == "Build annual file":
     st.subheader("Combine monthly Excel files")
     monthly_files = st.file_uploader(
         "Upload monthly transaction workbooks",
@@ -781,7 +1039,7 @@ with annual_tab:
             except Exception as exc:
                 st.error(str(exc))
 
-with payroll_tab:
+if selected_page == "Payroll template":
     st.subheader("Payroll calculator")
     st.caption("Enter one pay period, then download a payslip PDF and updated payroll register.")
 
@@ -945,7 +1203,7 @@ with payroll_tab:
             st.dataframe(saved["updated_register"].tail(1), use_container_width=True, hide_index=True)
         st.warning("Payroll calculations should be reviewed against CRA PDOC before remitting or filing.")
 
-with financial_tab:
+if selected_page == "Financial statements":
     st.subheader("Compiled financial statements")
     st.caption(
         "Upload T2 Schedule 100 and Schedule 125. The app extracts GIFI amounts and creates "
@@ -1078,7 +1336,7 @@ with financial_tab:
             st.markdown("**Schedule 125 extracted data**")
             st.dataframe(fs_result["income"], use_container_width=True, hide_index=True)
 
-with mortgage_tab:
+if selected_page == "Maximum mortgage":
     st.subheader("Maximum Mortgage Under GDSR")
     st.caption("Estimate mortgage capacity using gross income and housing costs.")
 
@@ -1196,7 +1454,7 @@ with mortgage_tab:
         "A lender will also review TDS, credit, income, down payment, property type, and its own policies."
     )
 
-with investment_tab:
+if selected_page == "Real estate agent":
     st.subheader("Real Estate Investment Agent")
     st.caption("Rank listings using financing costs, rents, comparable sales, and location signals.")
 
@@ -1336,7 +1594,7 @@ with investment_tab:
     else:
         st.info("Use a Realtor.ca map URL or upload a saved listing CSV to begin.")
 
-with guide_tab:
+if selected_page == "Guide":
     st.subheader("Recommended file names")
     st.caption("You may use any filename. This format makes monthly and annual files easier to sort.")
     st.code(
