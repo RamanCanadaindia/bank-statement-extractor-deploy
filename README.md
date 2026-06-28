@@ -48,3 +48,16 @@ balances and the income statement reconciles, and creates:
 Generated packages are drafts. A qualified practitioner must approve the basis
 of accounting, report wording, classifications, report date, and signature
 before issuance.
+
+## Mortgage qualification
+
+The Maximum mortgage page estimates Canadian mortgage capacity under the GDS
+ratio. It includes property taxes, heating, 50% of condominium fees, and the
+mortgage stress-test calculation.
+
+## Real estate investment agent
+
+The Real estate agent page accepts a Realtor.ca map search URL or a saved
+listing CSV. It ranks listings using financing costs and optional comparable
+sales, rental, transit, school, and development data, then exports an Excel
+workbook.

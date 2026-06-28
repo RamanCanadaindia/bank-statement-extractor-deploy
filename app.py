@@ -21,9 +21,20 @@ sys.path.insert(0, str(APP_DIR))
 
 import bmo_docling_to_excel as extractor
 import financial_statement_generator as fs_generator
+import mortgage_calculator as mortgage
+from real_estate_research_agent import (
+    Assumptions as InvestmentAssumptions,
+    RentalProvider,
+    RealtorSavedSearchProvider,
+    SignalProvider,
+    ZealtyProvider,
+    merge_with_state,
+    score_property,
+)
 
 importlib.reload(extractor)
 importlib.reload(fs_generator)
+importlib.reload(mortgage)
 
 
 st.set_page_config(
@@ -142,6 +153,12 @@ PAYROLL_COLUMNS = [
     "pdf_link",
     "status",
 ]
+DEFAULT_REALTOR_URL = (
+    "https://www.realtor.ca/map#ZoomLevel=15&Center=49.158114%2C-122.846239"
+    "&LatitudeMax=49.16707&LongitudeMax=-122.81311&LatitudeMin=49.14916"
+    "&LongitudeMin=-122.87937&Sort=6-D&PropertyTypeGroupID=1"
+    "&TransactionTypeId=2&PropertySearchTypeId=1&OwnershipTypeGroupId=1&Currency=CAD"
+)
 
 
 def safe_name(value: str) -> str:
@@ -564,13 +581,87 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
     return buffer.getvalue()
 
 
+def save_uploaded_file(uploaded_file, folder: Path) -> Path | None:
+    if uploaded_file is None:
+        return None
+    path = folder / safe_name(uploaded_file.name)
+    path.write_bytes(uploaded_file.getvalue())
+    return path
+
+
+def run_real_estate_search(
+    source_mode: str,
+    realtor_url: str,
+    listing_csv,
+    zealty_upload,
+    rental_upload,
+    signal_upload,
+    assumptions: InvestmentAssumptions,
+) -> tuple[list[dict], dict]:
+    with tempfile.TemporaryDirectory(prefix="real_estate_") as temp_name:
+        temp_dir = Path(temp_name)
+        listing_path = save_uploaded_file(listing_csv, temp_dir)
+        zealty_path = save_uploaded_file(zealty_upload, temp_dir)
+        rental_path = save_uploaded_file(rental_upload, temp_dir)
+        signal_path = save_uploaded_file(signal_upload, temp_dir)
+
+        if source_mode == "Saved listing CSV":
+            if listing_path is None:
+                raise ValueError("Upload a Realtor listing CSV.")
+            realtor = RealtorSavedSearchProvider(csv_path=listing_path)
+        else:
+            if not realtor_url.strip():
+                raise ValueError("Paste a Realtor.ca map search URL.")
+            realtor = RealtorSavedSearchProvider(search_url=realtor_url.strip())
+
+        zealty = ZealtyProvider(zealty_path)
+        rentals = RentalProvider(rental_path)
+        signals = SignalProvider(signal_path)
+        rows = [
+            score_property(
+                listing,
+                zealty.fetch(listing),
+                rentals.fetch(listing),
+                signals.fetch(listing),
+                assumptions,
+            )
+            for listing in realtor.fetch()
+        ]
+        return merge_with_state(rows, {})
+
+
+def real_estate_excel_bytes(database: pd.DataFrame, top: pd.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for sheet_name, frame in {
+            "Property Database": database,
+            "Top Opportunities": top,
+        }.items():
+            frame.to_excel(writer, sheet_name=sheet_name, index=False)
+            worksheet = writer.sheets[sheet_name]
+            worksheet.freeze_panes = "A2"
+            worksheet.auto_filter.ref = worksheet.dimensions
+            for column_cells in worksheet.columns:
+                width = max(len(str(cell.value or "")) for cell in column_cells)
+                worksheet.column_dimensions[column_cells[0].column_letter].width = min(max(width + 2, 11), 42)
+    return buffer.getvalue()
+
+
 st.title("Raman Financial Services")
 st.subheader("Accounting Tools")
 st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
-st.caption("Extract bank transactions, prepare payroll records, and draft compiled financial statements.")
+st.caption("Accounting, mortgage qualification, and real estate investment tools.")
 
-extract_tab, annual_tab, payroll_tab, financial_tab, guide_tab = st.tabs(
-    ["Extract statements", "Build annual file", "Payroll template", "Financial statements", "Guide"]
+extract_tab, annual_tab, payroll_tab, financial_tab, mortgage_tab, investment_tab, guide_tab = st.tabs(
+    [
+        "Extract statements",
+        "Build annual file",
+        "Payroll template",
+        "Financial statements",
+        "Maximum mortgage",
+        "Real estate agent",
+        "Guide",
+    ]
 )
 
 with extract_tab:
@@ -983,6 +1074,264 @@ with financial_tab:
             st.markdown("**Schedule 125 extracted data**")
             st.dataframe(fs_result["income"], use_container_width=True, hide_index=True)
 
+with mortgage_tab:
+    st.subheader("Maximum Mortgage Under GDSR")
+    st.caption("Estimate mortgage capacity using gross income and housing costs.")
+
+    with st.form("gds_mortgage_form"):
+        income_col, rate_col, amortization_col = st.columns(3)
+        annual_income = income_col.number_input(
+            "Annual household income",
+            min_value=0.0,
+            value=120000.0,
+            step=5000.0,
+            format="%.2f",
+        )
+        contract_rate = rate_col.number_input(
+            "Mortgage contract rate (%)",
+            min_value=0.0,
+            value=4.50,
+            step=0.05,
+            format="%.2f",
+        )
+        amortization = amortization_col.selectbox("Amortization", [25, 30], format_func=lambda value: f"{value} years")
+
+        tax_col, heat_col, condo_col = st.columns(3)
+        annual_taxes = tax_col.number_input(
+            "Annual property taxes",
+            min_value=0.0,
+            value=4800.0,
+            step=100.0,
+            format="%.2f",
+        )
+        monthly_heat = heat_col.number_input(
+            "Monthly heating cost",
+            min_value=0.0,
+            value=150.0,
+            step=10.0,
+            format="%.2f",
+        )
+        monthly_condo = condo_col.number_input(
+            "Monthly condo fees",
+            min_value=0.0,
+            value=0.0,
+            step=25.0,
+            format="%.2f",
+        )
+
+        gds_col, down_col = st.columns(2)
+        gds_limit = gds_col.number_input(
+            "Maximum GDS ratio (%)",
+            min_value=1.0,
+            max_value=100.0,
+            value=39.0,
+            step=0.5,
+        )
+        down_payment = down_col.number_input(
+            "Down payment for purchase-price estimate (%)",
+            min_value=0.0,
+            max_value=99.0,
+            value=20.0,
+            step=1.0,
+        )
+        mortgage_clicked = st.form_submit_button(
+            "Calculate maximum mortgage",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if mortgage_clicked:
+        try:
+            st.session_state["gds_result"] = mortgage.calculate_maximum_mortgage(
+                annual_household_income=annual_income,
+                contract_rate_pct=contract_rate,
+                amortization_years=amortization,
+                annual_property_taxes=annual_taxes,
+                monthly_heating=monthly_heat,
+                monthly_condo_fees=monthly_condo,
+                gds_limit_pct=gds_limit,
+                down_payment_pct=down_payment,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+
+    gds_result = st.session_state.get("gds_result")
+    if gds_result:
+        result_cols = st.columns(4)
+        result_cols[0].metric("Maximum mortgage", f"${gds_result.maximum_mortgage:,.0f}")
+        result_cols[1].metric("Maximum mortgage payment", f"${gds_result.maximum_mortgage_payment:,.2f}/month")
+        result_cols[2].metric("Qualifying rate", f"{gds_result.qualifying_rate:.2%}")
+        result_cols[3].metric("Estimated purchase price", f"${gds_result.estimated_purchase_price:,.0f}")
+
+        st.markdown("**GDS calculation**")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    ["Gross monthly income", gds_result.gross_monthly_income],
+                    ["Maximum housing cost under GDS", gds_result.maximum_housing_cost],
+                    ["Less: monthly property taxes", -gds_result.property_tax_monthly],
+                    ["Less: monthly heating", -gds_result.heating_monthly],
+                    ["Less: 50% of condo fees", -gds_result.condo_fee_portion],
+                    ["Available mortgage payment", gds_result.maximum_mortgage_payment],
+                ],
+                columns=["Calculation", "Monthly amount"],
+            ).style.format({"Monthly amount": "${:,.2f}"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.code(
+            "Maximum mortgage payment = (gross monthly income x GDS limit) "
+            "- property taxes - heating - 50% of condo fees",
+            language="text",
+        )
+        if gds_result.maximum_mortgage <= 0:
+            st.warning("The entered housing costs use all available GDS capacity.")
+
+    st.info(
+        "This is a planning estimate. It uses the greater of the contract rate plus 2% or 5.25%. "
+        "A lender will also review TDS, credit, income, down payment, property type, and its own policies."
+    )
+
+with investment_tab:
+    st.subheader("Real Estate Investment Agent")
+    st.caption("Rank listings using financing costs, rents, comparable sales, and location signals.")
+
+    with st.form("real_estate_search_form"):
+        source_mode = st.radio(
+            "Listing source",
+            ["Realtor.ca map search", "Saved listing CSV"],
+            horizontal=True,
+        )
+        realtor_url = st.text_area(
+            "Realtor.ca map search URL",
+            value=DEFAULT_REALTOR_URL,
+            height=90,
+            disabled=source_mode != "Realtor.ca map search",
+        )
+        listing_csv = st.file_uploader(
+            "Realtor listing CSV",
+            type=["csv"],
+            disabled=source_mode != "Saved listing CSV",
+        )
+
+        st.markdown("**Financing assumptions**")
+        rate_input, amortization_input, down_input = st.columns(3)
+        investment_rate = rate_input.number_input(
+            "Mortgage rate (%)",
+            min_value=0.0,
+            value=5.25,
+            step=0.05,
+        )
+        investment_amortization = amortization_input.selectbox(
+            "Mortgage amortization",
+            [25, 30],
+            format_func=lambda value: f"{value} years",
+        )
+        investment_down = down_input.number_input(
+            "Down payment (%)",
+            min_value=0.0,
+            max_value=99.0,
+            value=20.0,
+            step=1.0,
+        )
+        buffer_input, vacancy_input = st.columns(2)
+        monthly_buffer = buffer_input.number_input(
+            "Monthly repair/insurance buffer",
+            min_value=0.0,
+            value=250.0,
+            step=25.0,
+        )
+        vacancy_rate = vacancy_input.number_input(
+            "Vacancy allowance (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=3.0,
+            step=0.5,
+        )
+
+        with st.expander("Optional enrichment files"):
+            enrich_cols = st.columns(3)
+            zealty_upload = enrich_cols[0].file_uploader("Comparable sales JSON", type=["json"])
+            rental_upload = enrich_cols[1].file_uploader("Rental estimates JSON", type=["json"])
+            signal_upload = enrich_cols[2].file_uploader("Transit, school and development JSON", type=["json"])
+
+        investment_clicked = st.form_submit_button(
+            "Run investment search",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if investment_clicked:
+        assumptions = InvestmentAssumptions(
+            mortgage_interest_rate=investment_rate / 100,
+            amortization_years=investment_amortization,
+            down_payment_pct=investment_down / 100,
+            monthly_buffer=monthly_buffer,
+            vacancy_pct=vacancy_rate / 100,
+        )
+        try:
+            with st.spinner("Collecting and ranking properties..."):
+                investment_rows, investment_counts = run_real_estate_search(
+                    source_mode,
+                    realtor_url,
+                    listing_csv,
+                    zealty_upload,
+                    rental_upload,
+                    signal_upload,
+                    assumptions,
+                )
+            if not investment_rows:
+                st.warning("No supported listings were found in the selected search.")
+            else:
+                st.session_state["investment_rows"] = investment_rows
+                st.session_state["investment_counts"] = investment_counts
+        except Exception as exc:
+            st.error(str(exc))
+
+    investment_rows = st.session_state.get("investment_rows", [])
+    if investment_rows:
+        investment_df = pd.DataFrame(
+            [{key: value for key, value in row.items() if not key.startswith("_")} for row in investment_rows]
+        )
+        investment_top = investment_df.sort_values("Investment Score", ascending=False).head(10)
+        price_per_sqft = investment_df["Price / Sq Ft"].dropna()
+        investment_metrics = st.columns(3)
+        investment_metrics[0].metric("Listings found", len(investment_df))
+        investment_metrics[1].metric("Average list price", f"${investment_df['List Price'].mean():,.0f}")
+        investment_metrics[2].metric(
+            "Median price per sq. ft.",
+            f"${price_per_sqft.median():,.0f}" if not price_per_sqft.empty else "Not available",
+        )
+
+        st.markdown("**Top investment opportunities**")
+        st.dataframe(
+            investment_top[
+                [
+                    "Address",
+                    "City",
+                    "List Price",
+                    "Estimated Rent",
+                    "Estimated Cash Flow",
+                    "Investment Score",
+                    "Flags",
+                    "Notes",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        with st.expander("Full property database"):
+            st.dataframe(investment_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download investment workbook",
+            data=real_estate_excel_bytes(investment_df, investment_top),
+            file_name="Real_Estate_Investment_Analysis.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+        )
+    else:
+        st.info("Use a Realtor.ca map URL or upload a saved listing CSV to begin.")
+
 with guide_tab:
     st.subheader("Recommended file names")
     st.caption("You may use any filename. This format makes monthly and annual files easier to sort.")
@@ -1012,4 +1361,12 @@ with guide_tab:
         "5. Review and sign the editable Word draft before providing it to a client or third party."
     )
     st.code("2025-12-31_CompanyName_S100.pdf\n2025-12-31_CompanyName_S125.pdf", language="text")
+    st.subheader("Mortgage and real estate tools")
+    st.markdown(
+        "1. Use **Maximum mortgage** for a GDS-based planning estimate.\n"
+        "2. Enter heating and condo fees separately; the calculator includes 50% of condo fees.\n"
+        "3. Use **Real estate agent** with a Realtor.ca map search URL or a saved listing CSV.\n"
+        "4. Add optional comparable-sale, rental, and location JSON files for a stronger score.\n"
+        "5. Review financing, rent, expenses, title, zoning, condition, and lender approval before acting."
+    )
     st.info("Files uploaded to this app are processed for the current session. Configure your hosting provider's privacy and retention settings before using real client statements.")
