@@ -59,7 +59,7 @@ st.markdown(
     html, body, [class*="css"] {font-family: Inter, "Segoe UI", Arial, sans-serif;}
     .stApp {background: var(--rfs-bg); color: var(--rfs-navy);}
     [data-testid="stHeader"] {background: rgba(245, 247, 251, 0.92);}
-    .block-container {max-width: 1280px; padding: 1.25rem 2rem 4rem;}
+    .block-container {max-width: 1280px; padding: 4.5rem 2rem 4rem;}
     h1, h2, h3 {letter-spacing: 0; color: var(--rfs-navy);}
     h1 {font-size: 1.75rem !important;}
     h2 {font-size: 1.35rem !important;}
@@ -210,7 +210,7 @@ st.markdown(
     .status-error {padding: 12px 14px; border-left: 4px solid #c73838; background: #fff2f2;}
 
     @media (max-width: 768px) {
-        .block-container {padding: 1rem 0.9rem 3rem;}
+        .block-container {padding: 4rem 0.9rem 3rem;}
         .rfs-topbar {align-items: flex-start;}
         .rfs-status {display: none;}
         .rfs-card-copy {min-height: 0;}
