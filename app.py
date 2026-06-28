@@ -20,12 +20,14 @@ APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 
 import bmo_docling_to_excel as extractor
+import financial_statement_generator as fs_generator
 
 importlib.reload(extractor)
+importlib.reload(fs_generator)
 
 
 st.set_page_config(
-    page_title="Raman Financial Services - Bank Statement Extractor",
+    page_title="Raman Financial Services - Accounting Tools",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -56,7 +58,7 @@ def require_password() -> None:
         return
 
     st.title("Raman Financial Services")
-    st.subheader("Bank Statement Extractor")
+    st.subheader("Accounting Tools")
     st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
     password = st.text_input("Password", type="password")
     if st.button("Sign in", type="primary"):
@@ -563,12 +565,12 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
 
 
 st.title("Raman Financial Services")
-st.subheader("Bank Statement Extractor")
+st.subheader("Accounting Tools")
 st.markdown("[ramanfinancialservices.ca](https://ramanfinancialservices.ca/)")
-st.caption("Convert bank statements into reviewable Excel transactions, then combine monthly files into an annual workbook.")
+st.caption("Extract bank transactions, prepare payroll records, and draft compiled financial statements.")
 
-extract_tab, annual_tab, payroll_tab, guide_tab = st.tabs(
-    ["Extract statements", "Build annual file", "Payroll template", "Guide"]
+extract_tab, annual_tab, payroll_tab, financial_tab, guide_tab = st.tabs(
+    ["Extract statements", "Build annual file", "Payroll template", "Financial statements", "Guide"]
 )
 
 with extract_tab:
@@ -848,6 +850,139 @@ with payroll_tab:
             st.dataframe(saved["updated_register"].tail(1), use_container_width=True, hide_index=True)
         st.warning("Payroll calculations should be reviewed against CRA PDOC before remitting or filing.")
 
+with financial_tab:
+    st.subheader("Compiled financial statements")
+    st.caption(
+        "Upload T2 Schedule 100 and Schedule 125. The app extracts GIFI amounts and creates "
+        "a draft Compilation Engagement Report package (formerly called Notice to Reader)."
+    )
+    st.warning(
+        "The generated package is a draft. A qualified practitioner must review the classifications, "
+        "basis of accounting, CSRS 4200 report wording, report date, and signature before issuance."
+    )
+
+    with st.form("financial-statements-form"):
+        file_cols = st.columns(2)
+        schedule_100_file = file_cols[0].file_uploader(
+            "Schedule 100 - Balance Sheet",
+            type=["pdf"],
+            key="schedule-100",
+            help="Upload the searchable Schedule 100 PDF exported from tax software.",
+        )
+        schedule_125_file = file_cols[1].file_uploader(
+            "Schedule 125 - Income Statement",
+            type=["pdf"],
+            key="schedule-125",
+            help="Upload the searchable Schedule 125 PDF exported from tax software.",
+        )
+
+        st.markdown("**Corporation and reporting period**")
+        company_cols = st.columns(3)
+        fs_company_name = company_cols[0].text_input("Corporation legal name")
+        fs_business_number = company_cols[1].text_input("Business number (optional)")
+        fs_year_end = company_cols[2].date_input("Fiscal year end", value=date.today())
+
+        st.markdown("**Practitioner information**")
+        firm_cols = st.columns(3)
+        fs_firm_name = firm_cols[0].text_input("Accounting firm", value="Raman Financial Services")
+        fs_firm_address = firm_cols[1].text_input("Practitioner address", value="Surrey, BC")
+        fs_report_date = firm_cols[2].date_input("Report date", value=date.today())
+
+        fs_basis = st.text_area(
+            "Basis of accounting note",
+            value=(
+                "The financial information has been prepared using a basis of accounting selected by "
+                "management. Revenue and expenses are recorded using the accrual method, capital assets "
+                "are recorded at cost less accumulated amortization, and income taxes are recorded on "
+                "the basis used in the corporation's income tax return."
+            ),
+            height=120,
+        )
+        with st.expander("Compilation Engagement Report wording"):
+            fs_report_text = st.text_area(
+                "Approved report wording",
+                value=fs_generator.DEFAULT_COMPILATION_REPORT,
+                height=300,
+                help=(
+                    "Placeholders {company_name} and {year_end} are filled automatically. "
+                    "Replace this draft with your firm's approved CSRS 4200 wording."
+                ),
+            )
+
+        fs_submitted = st.form_submit_button("Create draft financial statements", type="primary")
+
+    if fs_submitted:
+        if schedule_100_file is None or schedule_125_file is None:
+            st.error("Upload both Schedule 100 and Schedule 125 PDFs.")
+        elif not fs_company_name.strip():
+            st.error("Enter the corporation legal name.")
+        else:
+            try:
+                with st.spinner("Extracting GIFI data and preparing the report package..."):
+                    schedule_100 = fs_generator.extract_schedule_pdf(schedule_100_file.getvalue(), "100")
+                    schedule_125 = fs_generator.extract_schedule_pdf(schedule_125_file.getvalue(), "125")
+                    metadata = {
+                        "company_name": fs_company_name.strip(),
+                        "business_number": fs_business_number.strip(),
+                        "year_end": fs_year_end,
+                        "firm_name": fs_firm_name.strip() or "Accounting practitioner",
+                        "firm_address": fs_firm_address.strip(),
+                        "report_date": fs_report_date,
+                        "basis_of_accounting": fs_basis.strip(),
+                        "report_text": fs_report_text.strip(),
+                    }
+                    pdf_bytes = fs_generator.build_financial_statement_pdf(
+                        schedule_100.entries, schedule_125.entries, metadata
+                    )
+                    docx_bytes = fs_generator.build_financial_statement_docx(
+                        schedule_100.entries, schedule_125.entries, metadata
+                    )
+                    st.session_state["financial_statement_result"] = {
+                        "balance": schedule_100.entries,
+                        "income": schedule_125.entries,
+                        "warnings": schedule_100.warnings + schedule_125.warnings,
+                        "pdf": pdf_bytes,
+                        "docx": docx_bytes,
+                        "pdf_name": fs_generator.suggested_filename(fs_company_name, fs_year_end, "pdf"),
+                        "docx_name": fs_generator.suggested_filename(fs_company_name, fs_year_end, "docx"),
+                    }
+            except Exception as exc:
+                st.error(str(exc))
+
+    fs_result = st.session_state.get("financial_statement_result")
+    if fs_result:
+        if fs_result["warnings"]:
+            st.error("Review required before issuance:")
+            for warning in fs_result["warnings"]:
+                st.write(f"- {warning}")
+        else:
+            st.success("Schedule 100 balances and Schedule 125 reconciles.")
+
+        download_cols = st.columns(2)
+        download_cols[0].download_button(
+            "Download draft PDF",
+            data=fs_result["pdf"],
+            file_name=fs_result["pdf_name"],
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True,
+        )
+        download_cols[1].download_button(
+            "Download editable Word file",
+            data=fs_result["docx"],
+            file_name=fs_result["docx_name"],
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
+
+        preview_cols = st.columns(2)
+        with preview_cols[0]:
+            st.markdown("**Schedule 100 extracted data**")
+            st.dataframe(fs_result["balance"], use_container_width=True, hide_index=True)
+        with preview_cols[1]:
+            st.markdown("**Schedule 125 extracted data**")
+            st.dataframe(fs_result["income"], use_container_width=True, hide_index=True)
+
 with guide_tab:
     st.subheader("Recommended file names")
     st.caption("You may use any filename. This format makes monthly and annual files easier to sort.")
@@ -868,4 +1003,13 @@ with guide_tab:
         "3. Keep original PDFs until the annual accounting file is complete.\n"
         "4. Merge the verified monthly workbooks into an annual workbook."
     )
+    st.subheader("Financial statement files")
+    st.markdown(
+        "1. Export **Schedule 100** and **Schedule 125** as searchable PDFs from the T2 software.\n"
+        "2. Open **Financial statements** and upload each PDF in its labelled box.\n"
+        "3. Enter the corporation, fiscal year end, practitioner, basis of accounting and report date.\n"
+        "4. Confirm the balance and income reconciliation messages.\n"
+        "5. Review and sign the editable Word draft before providing it to a client or third party."
+    )
+    st.code("2025-12-31_CompanyName_S100.pdf\n2025-12-31_CompanyName_S125.pdf", language="text")
     st.info("Files uploaded to this app are processed for the current session. Configure your hosting provider's privacy and retention settings before using real client statements.")

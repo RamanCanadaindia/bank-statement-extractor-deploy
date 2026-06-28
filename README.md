@@ -1,6 +1,7 @@
-# Bank Statement Extractor Website
+# Raman Financial Services Accounting Tools
 
-A Streamlit website for converting Canadian bank statements into Excel and merging monthly workbooks into an annual file.
+A Streamlit website for bank-statement extraction, annual transaction workbooks,
+payroll records, and draft compiled financial statements.
 
 ## Run locally
 
@@ -33,3 +34,17 @@ Known layouts use tuned parsers first. Generic results are marked for review unl
 The visible Transactions sheet contains Date, Description, Amount, Category and Calculated Balance. Deposits are positive and withdrawals are negative. A hidden Extraction Data sheet preserves source values for validation and annual merging.
 
 For credit cards, payments/refunds are positive and purchases/fees/interest are negative. The calculated outstanding balance uses the credit-card balance direction.
+
+## Compiled financial statements
+
+The Financial statements page accepts searchable T2 Schedule 100 and Schedule
+125 PDFs. It extracts GIFI codes and amounts, checks that the balance sheet
+balances and the income statement reconciles, and creates:
+
+- a draft Compilation Engagement Report package in PDF format
+- an editable Word version for practitioner review
+- a preview of all extracted Schedule 100 and Schedule 125 rows
+
+Generated packages are drafts. A qualified practitioner must approve the basis
+of accounting, report wording, classifications, report date, and signature
+before issuance.
