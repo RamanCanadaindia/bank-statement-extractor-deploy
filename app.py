@@ -64,7 +64,7 @@ st.markdown(
     h1 {font-size: 1.75rem !important;}
     h2 {font-size: 1.35rem !important;}
     h3 {font-size: 1.05rem !important;}
-    p, label, [data-testid="stCaptionContainer"] {color: #42526a;}
+    .stMarkdown p, label, [data-testid="stCaptionContainer"] {color: #42526a;}
 
     [data-testid="stSidebar"] {
         background: #ffffff;
@@ -132,7 +132,13 @@ st.markdown(
         border-bottom: 1px solid var(--rfs-border);
         margin-bottom: 1.25rem;
     }
-    .rfs-topbrand {display: flex; align-items: center; gap: 0.65rem; font-weight: 750;}
+    .rfs-topbrand {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        color: var(--rfs-navy) !important;
+        font-weight: 750;
+    }
     .rfs-status {
         padding: 0.35rem 0.65rem;
         border: 1px solid #b9dfd0;
@@ -174,7 +180,10 @@ st.markdown(
     [data-testid="stFormSubmitButton"] button[kind="primary"] {
         background: var(--rfs-blue);
         border-color: var(--rfs-blue);
+        color: #ffffff !important;
     }
+    .stButton > button[kind="primary"] p, .stDownloadButton > button[kind="primary"] p,
+    [data-testid="stFormSubmitButton"] button[kind="primary"] p {color: #ffffff !important;}
     .stButton > button[kind="primary"]:hover, .stDownloadButton > button[kind="primary"]:hover {
         background: var(--rfs-blue-dark);
         border-color: var(--rfs-blue-dark);
