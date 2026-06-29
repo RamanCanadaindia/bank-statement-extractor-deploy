@@ -345,6 +345,33 @@ def extract_docling_text(pdf_bytes: bytes) -> str:
     return ""
 
 
+def extract_tesseract_text(pdf_bytes: bytes) -> str:
+    """Render pages at 300 DPI and OCR PDFs that contain no usable text layer."""
+    try:
+        import fitz
+        import pytesseract
+        from PIL import Image, ImageOps
+
+        document = fitz.open(stream=pdf_bytes, filetype="pdf")
+        output: list[str] = []
+        scale = 300 / 72
+        matrix = fitz.Matrix(scale, scale)
+        for page in document:
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False, colorspace=fitz.csRGB)
+            image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+            image = ImageOps.autocontrast(ImageOps.grayscale(image))
+            output.append(
+                pytesseract.image_to_string(
+                    image,
+                    config="--oem 3 --psm 6",
+                )
+            )
+        document.close()
+        return "\n".join(output)
+    except Exception:
+        return ""
+
+
 def extract_schedule_pdf(pdf_bytes: bytes, schedule: str) -> ScheduleResult:
     extracted_sources: list[str] = []
     for extractor in (extract_pdf_text, extract_pdf_layout_text, extract_pdf_form_text):
@@ -360,6 +387,13 @@ def extract_schedule_pdf(pdf_bytes: bytes, schedule: str) -> ScheduleResult:
         except RuntimeError:
             continue
 
+    tesseract_text = extract_tesseract_text(pdf_bytes)
+    if tesseract_text:
+        try:
+            return parse_schedule_text(tesseract_text, schedule)
+        except RuntimeError:
+            extracted_sources.append(tesseract_text)
+
     docling_text = extract_docling_text(pdf_bytes)
     if docling_text:
         try:
@@ -369,7 +403,7 @@ def extract_schedule_pdf(pdf_bytes: bytes, schedule: str) -> ScheduleResult:
 
     raise RuntimeError(
         f"No Schedule {str(schedule).upper().replace('S', '')} GIFI rows were found after "
-        "text, form-field, positioned-layout, and Docling/OCR extraction. "
+        "text, form-field, positioned-layout, Tesseract OCR, and Docling extraction. "
         "Upload the original PDF exported from the tax software, not a print preview."
     )
 

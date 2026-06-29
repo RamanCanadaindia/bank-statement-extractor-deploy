@@ -1,6 +1,7 @@
 from datetime import date
 import io
 import unittest
+from unittest.mock import patch
 
 import financial_statement_generator as generator
 
@@ -98,6 +99,23 @@ class FinancialStatementGeneratorTests(unittest.TestCase):
             float(result.entries.loc[result.entries["Code"] == 2599, "Amount"].iloc[0]),
             25000,
         )
+
+    @patch.object(generator, "extract_tesseract_text", return_value=SCHEDULE_100)
+    @patch.object(generator, "extract_docling_text", return_value="")
+    @patch.object(generator, "extract_pdf_form_text", return_value="")
+    @patch.object(generator, "extract_pdf_layout_text", return_value="")
+    @patch.object(generator, "extract_pdf_text", return_value="")
+    def test_image_only_pdf_uses_tesseract_fallback(
+        self,
+        _pdf_text,
+        _layout_text,
+        _form_text,
+        _docling_text,
+        tesseract_text,
+    ):
+        result = generator.extract_schedule_pdf(b"image-only-pdf", "100")
+        self.assertIn(2599, result.entries["Code"].tolist())
+        tesseract_text.assert_called_once()
 
     def test_unbalanced_schedule_is_flagged(self):
         result = generator.parse_schedule_text(SCHEDULE_100.replace("3640 Total liabilities and shareholder equity 100,000", "3640 Total liabilities and shareholder equity 99,000"), "100")
