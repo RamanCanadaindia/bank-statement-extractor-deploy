@@ -651,6 +651,20 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
 
     rows = []
     direct_error = None
+    scanned_td_attempted = False
+    image_only_pdf = (
+        input_path.suffix.lower() == ".pdf"
+        and not extractor.read_pdf_text(input_path).strip()
+    )
+    if image_only_pdf and bank in {"TD", "Other bank"}:
+        scanned_td_attempted = True
+        try:
+            rows = extractor.extract_scanned_td_pdf_transactions(input_path)
+            if rows and bank == "Other bank":
+                bank = "TD"
+        except RuntimeError as exc:
+            direct_error = exc
+
     if input_path.suffix.lower() == ".pdf" and bank not in {"BMO", "TD", "Other bank"}:
         try:
             rows = extractor.extract_from_statement_file(input_path, bank)
@@ -658,6 +672,15 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
             direct_error = exc
 
     if not rows:
+        if scanned_td_attempted:
+            if direct_error is not None:
+                raise RuntimeError(
+                    f"The scanned TD reader could not process this file: {direct_error}"
+                ) from direct_error
+            raise RuntimeError(
+                "The scanned TD reader did not find Date, Description, Debit, Credit, "
+                "and Balance columns. No Excel file was created."
+            )
         effective_path = input_path
         if input_path.suffix.lower() == ".pdf":
             effective_path = docling_json_for_pdf(input_path, work_dir)

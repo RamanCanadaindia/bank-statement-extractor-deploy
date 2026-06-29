@@ -13,6 +13,7 @@ To adapt this for RBC, TD, CIBC, or credit cards, start by changing:
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import sys
@@ -696,6 +697,182 @@ def parse_table_rows(tables: list[list[list[str]]]) -> list[ParsedLine]:
                 parsed.append(line)
 
     return parsed
+
+
+SCANNED_DATE_RE = re.compile(
+    r"\b(?P<month>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
+    r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?)\s*(?P<day>\d{1,2})\s*,?\s*(?P<year>\d{4})\b",
+    re.IGNORECASE,
+)
+
+
+def parse_scanned_debit_credit_ocr_data(data: dict[str, list[Any]]) -> list[ParsedLine]:
+    """Parse positioned Tesseract output for Date/Description/Debit/Credit/Balance tables."""
+    tokens: list[dict[str, Any]] = []
+    count = len(data.get("text", []))
+    for index in range(count):
+        text = clean_text(data["text"][index])
+        if not text:
+            continue
+        try:
+            confidence = float(data.get("conf", [100] * count)[index])
+        except (TypeError, ValueError):
+            confidence = 0
+        if confidence < 15:
+            continue
+        x = int(data["left"][index])
+        y = int(data["top"][index])
+        width = int(data["width"][index])
+        height = int(data["height"][index])
+        tokens.append(
+            {
+                "text": text,
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+                "cx": x + width / 2,
+                "cy": y + height / 2,
+            }
+        )
+
+    header = None
+    for debit_token in (token for token in tokens if token["text"].lower().startswith("debit")):
+        band = [
+            token
+            for token in tokens
+            if abs(token["cy"] - debit_token["cy"]) <= max(18, debit_token["height"] * 1.5)
+        ]
+        by_name = {
+            name: next(
+                (token for token in band if token["text"].lower().startswith(name)),
+                None,
+            )
+            for name in ("date", "description", "debit", "credit", "balance")
+        }
+        if all(by_name.values()):
+            header = by_name
+            break
+    if not header:
+        return []
+
+    amount_start = (header["description"]["cx"] + header["debit"]["cx"]) / 2
+    column_centers = {
+        "debit": header["debit"]["cx"],
+        "credit": header["credit"]["cx"],
+        "balance": header["balance"]["cx"],
+    }
+    table_tokens = [token for token in tokens if token["cy"] > header["debit"]["cy"] + 8]
+
+    lines: list[list[dict[str, Any]]] = []
+    for token in sorted(table_tokens, key=lambda item: (item["cy"], item["x"])):
+        matching_line = next(
+            (
+                line
+                for line in reversed(lines[-4:])
+                if abs(
+                    sum(item["cy"] for item in line) / len(line) - token["cy"]
+                )
+                <= max(10, token["height"] * 0.65)
+            ),
+            None,
+        )
+        if matching_line is None:
+            lines.append([token])
+        else:
+            matching_line.append(token)
+
+    parsed: list[ParsedLine] = []
+    for line in lines:
+        ordered = sorted(line, key=lambda item: item["x"])
+        line_text = " ".join(item["text"] for item in ordered)
+        date_match = SCANNED_DATE_RE.search(line_text)
+        if not date_match:
+            continue
+
+        column_tokens: dict[str, list[dict[str, Any]]] = {
+            "debit": [],
+            "credit": [],
+            "balance": [],
+        }
+        amount_token_ids: set[int] = set()
+        for token in ordered:
+            if token["cx"] <= amount_start:
+                continue
+            if not re.search(r"\d[\d,]*\.\d{2}", token["text"]):
+                continue
+            column = min(
+                column_centers,
+                key=lambda name: abs(token["cx"] - column_centers[name]),
+            )
+            column_tokens[column].append(token)
+            amount_token_ids.add(id(token))
+
+        debit = parse_amount(" ".join(item["text"] for item in column_tokens["debit"]))
+        credit = parse_amount(" ".join(item["text"] for item in column_tokens["credit"]))
+        balance = parse_amount(" ".join(item["text"] for item in column_tokens["balance"]))
+        if debit is None and credit is None:
+            continue
+
+        description_text = " ".join(
+            item["text"] for item in ordered if id(item) not in amount_token_ids
+        )
+        description = clean_text(SCANNED_DATE_RE.sub("", description_text, count=1))
+        if not description:
+            continue
+
+        date_value = datetime(
+            int(date_match.group("year")),
+            datetime.strptime(date_match.group("month")[:3].title(), "%b").month,
+            int(date_match.group("day")),
+        ).strftime("%Y-%m-%d")
+        parsed.append(
+            ParsedLine(
+                date=date_value,
+                description=description,
+                debit=abs(debit) if debit is not None else None,
+                credit=abs(credit) if credit is not None else None,
+                balance=balance,
+                category=categorize_transaction(description),
+            )
+        )
+    return parsed
+
+
+def extract_scanned_td_pdf_transactions(path: Path) -> list[ParsedLine]:
+    """OCR a scanned TD activity report one page at a time to limit server memory."""
+    try:
+        import fitz
+        import pytesseract
+        from PIL import Image, ImageOps
+    except ImportError as exc:
+        raise RuntimeError(
+            "Scanned TD extraction requires PyMuPDF, Pillow, pytesseract, and Tesseract."
+        ) from exc
+
+    parsed: list[ParsedLine] = []
+    document = fitz.open(path)
+    try:
+        for page in document:
+            pixmap = page.get_pixmap(
+                matrix=fitz.Matrix(2, 2),
+                alpha=False,
+                colorspace=fitz.csRGB,
+            )
+            image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+            grayscale = ImageOps.autocontrast(ImageOps.grayscale(image))
+            data = pytesseract.image_to_data(
+                grayscale,
+                config="--oem 3 --psm 6",
+                output_type=pytesseract.Output.DICT,
+            )
+            parsed.extend(parse_scanned_debit_credit_ocr_data(data))
+            image.close()
+            grayscale.close()
+    finally:
+        document.close()
+    return dedupe_transactions(parsed)
 
 
 def dedupe_transactions(rows: Iterable[ParsedLine]) -> list[ParsedLine]:
