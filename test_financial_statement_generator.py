@@ -65,6 +65,40 @@ class FinancialStatementGeneratorTests(unittest.TestCase):
         result = generator.parse_schedule_text("Cash\n1001 25,000\nTotal assets\n2599 25,000", "100")
         self.assertEqual(result.entries.iloc[0]["Description"], "Cash")
 
+    def test_separate_description_code_and_amount_lines_are_supported(self):
+        result = generator.parse_schedule_text(
+            "Cash\n1001\n25,000\nTotal assets\n2599\n25,000",
+            "100",
+        )
+        self.assertEqual(result.entries.iloc[0]["Description"], "Cash")
+        self.assertEqual(float(result.entries.iloc[0]["Amount"]), 25000)
+
+    def test_acroform_gifi_fields_are_supported(self):
+        from reportlab.pdfgen import canvas
+
+        buffer = io.BytesIO()
+        pdf = canvas.Canvas(buffer)
+        fields = {
+            "schedule100_gifi_1001": "25000",
+            "schedule100_gifi_2599": "25000",
+            "schedule100_gifi_3499": "10000",
+            "schedule100_gifi_3620": "15000",
+            "schedule100_gifi_3640": "25000",
+        }
+        y = 740
+        for name, value in fields.items():
+            pdf.acroForm.textfield(name=name, value=value, x=72, y=y, width=120, height=16)
+            y -= 24
+        pdf.showPage()
+        pdf.save()
+
+        result = generator.extract_schedule_pdf(buffer.getvalue(), "100")
+        self.assertIn(2599, result.entries["Code"].tolist())
+        self.assertEqual(
+            float(result.entries.loc[result.entries["Code"] == 2599, "Amount"].iloc[0]),
+            25000,
+        )
+
     def test_unbalanced_schedule_is_flagged(self):
         result = generator.parse_schedule_text(SCHEDULE_100.replace("3640 Total liabilities and shareholder equity 100,000", "3640 Total liabilities and shareholder equity 99,000"), "100")
         self.assertTrue(any("does not agree" in warning for warning in result.warnings))

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import re
+import tempfile
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Iterable
 from xml.sax.saxutils import escape
 
@@ -152,26 +154,58 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
     allowed = range(1000, 3650) if schedule == "100" else range(8000, 10000)
     rows: list[dict] = []
     pending_description = ""
+    pending_code: int | None = None
+    standalone_code_pattern = re.compile(r"^\s*(?:GIFI\s*)?(?P<code>\d{4})\s*$", re.IGNORECASE)
+    standalone_amount_pattern = re.compile(
+        rf"^\s*(?P<amount>{amount_pattern})(?:\s+{amount_pattern})?\s*$"
+    )
+
+    def append_row(code: int, amount_text: str, description: str = "") -> bool:
+        if code not in allowed:
+            return False
+        try:
+            amount = _money(amount_text)
+        except ValueError:
+            return False
+        rows.append(
+            {
+                "Code": code,
+                "Description": _clean_description(description or pending_description, code),
+                "Amount": amount,
+            }
+        )
+        return True
 
     for raw_line in text.replace("\u00a0", " ").splitlines():
         line = re.sub(r"\s+", " ", raw_line).strip()
         if not line:
             continue
         match = next((pattern.match(line) for pattern in patterns if pattern.match(line)), None)
-        if not match:
-            if not re.search(r"\d{4}", line) and not re.search(r"\d[\d,]*\.\d{2}", line):
-                pending_description = line[:160]
+        if match:
+            code = int(match.group("code"))
+            if append_row(code, match.group("amount"), match.groupdict().get("desc", "")):
+                pending_description = ""
+                pending_code = None
             continue
-        code = int(match.group("code"))
-        if code not in allowed:
+
+        code_match = standalone_code_pattern.match(line)
+        if code_match:
+            code = int(code_match.group("code"))
+            if code in allowed:
+                pending_code = code
             continue
-        try:
-            amount = _money(match.group("amount"))
-        except ValueError:
+
+        amount_match = standalone_amount_pattern.match(line)
+        if pending_code is not None and amount_match:
+            if append_row(pending_code, amount_match.group("amount")):
+                pending_description = ""
+                pending_code = None
             continue
-        description = _clean_description(match.groupdict().get("desc", "") or pending_description, code)
-        rows.append({"Code": code, "Description": description, "Amount": amount})
-        pending_description = ""
+
+        if not re.search(r"\d{4}", line) and not re.fullmatch(amount_pattern, line):
+            # Positioned tax forms often extract the label, code and amount as
+            # separate lines. Keep the latest text label until a row is complete.
+            pending_description = line[:160]
 
     if not rows:
         raise RuntimeError(
@@ -212,8 +246,132 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
         raise RuntimeError(f"Could not read the PDF: {exc}") from exc
 
 
+def extract_pdf_layout_text(pdf_bytes: bytes) -> str:
+    """Rebuild lines from positioned words when PDF text order is column-based."""
+    try:
+        import pdfplumber
+
+        output: list[str] = []
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                words = page.extract_words(
+                    x_tolerance=2,
+                    y_tolerance=3,
+                    keep_blank_chars=False,
+                    use_text_flow=False,
+                )
+                line_groups: list[list[dict]] = []
+                for word in sorted(words, key=lambda item: (round(float(item["top"]) / 3), float(item["x0"]))):
+                    top = float(word["top"])
+                    group = next(
+                        (
+                            candidate
+                            for candidate in line_groups
+                            if abs(float(candidate[0]["top"]) - top) <= 3
+                        ),
+                        None,
+                    )
+                    if group is None:
+                        group = []
+                        line_groups.append(group)
+                    group.append(word)
+                for group in line_groups:
+                    output.append(
+                        " ".join(str(word["text"]) for word in sorted(group, key=lambda item: float(item["x0"])))
+                    )
+        return "\n".join(output)
+    except Exception:
+        return ""
+
+
+def extract_pdf_form_text(pdf_bytes: bytes) -> str:
+    """Read AcroForm and XFA values used by some T2 tax-software exports."""
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        output: list[str] = []
+        fields = reader.get_fields() or {}
+        for name, field in fields.items():
+            value = field.get("/V")
+            if value in (None, ""):
+                continue
+            values = list(value) if isinstance(value, (list, tuple)) else [value]
+            code_match = re.search(r"(?<!\d)(\d{4})(?!\d)", str(name))
+            for item in values:
+                if code_match:
+                    output.append(f"{code_match.group(1)} {item}")
+                else:
+                    output.append(str(item))
+
+        root = reader.trailer.get("/Root")
+        acroform = root.get("/AcroForm") if root else None
+        if acroform:
+            acroform = acroform.get_object()
+            xfa = acroform.get("/XFA")
+            streams = []
+            if isinstance(xfa, list):
+                streams = [xfa[index] for index in range(1, len(xfa), 2)]
+            elif xfa is not None:
+                streams = [xfa]
+            for stream in streams:
+                try:
+                    xml = stream.get_object().get_data().decode("utf-8", errors="ignore")
+                    output.append(re.sub(r"<[^>]+>", "\n", xml))
+                except Exception:
+                    continue
+        return "\n".join(output)
+    except Exception:
+        return ""
+
+
+def extract_docling_text(pdf_bytes: bytes) -> str:
+    """Use Docling as the final OCR/table fallback for graphical tax PDFs."""
+    try:
+        from docling.document_converter import DocumentConverter
+
+        with tempfile.TemporaryDirectory(prefix="gifi_docling_") as temp_name:
+            pdf_path = Path(temp_name) / "schedule.pdf"
+            pdf_path.write_bytes(pdf_bytes)
+            document = DocumentConverter().convert(str(pdf_path)).document
+            for method_name in ("export_to_markdown", "export_to_text"):
+                method = getattr(document, method_name, None)
+                if method:
+                    text = method()
+                    if text and str(text).strip():
+                        return str(text)
+    except Exception:
+        return ""
+    return ""
+
+
 def extract_schedule_pdf(pdf_bytes: bytes, schedule: str) -> ScheduleResult:
-    return parse_schedule_text(extract_pdf_text(pdf_bytes), schedule)
+    extracted_sources: list[str] = []
+    for extractor in (extract_pdf_text, extract_pdf_layout_text, extract_pdf_form_text):
+        try:
+            text = extractor(pdf_bytes)
+        except RuntimeError:
+            text = ""
+        if not text or text in extracted_sources:
+            continue
+        extracted_sources.append(text)
+        try:
+            return parse_schedule_text(text, schedule)
+        except RuntimeError:
+            continue
+
+    docling_text = extract_docling_text(pdf_bytes)
+    if docling_text:
+        try:
+            return parse_schedule_text(docling_text, schedule)
+        except RuntimeError:
+            extracted_sources.append(docling_text)
+
+    raise RuntimeError(
+        f"No Schedule {str(schedule).upper().replace('S', '')} GIFI rows were found after "
+        "text, form-field, positioned-layout, and Docling/OCR extraction. "
+        "Upload the original PDF exported from the tax software, not a print preview."
+    )
 
 
 def _value(entries: pd.DataFrame, code: int) -> float | None:

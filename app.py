@@ -1467,13 +1467,13 @@ if selected_page == "Financial statements":
             "Schedule 100 - Balance Sheet",
             type=["pdf"],
             key="schedule-100",
-            help="Upload the searchable Schedule 100 PDF exported from tax software.",
+            help="Upload the original Schedule 100 PDF exported from tax software. Form fields and OCR are supported.",
         )
         schedule_125_file = file_cols[1].file_uploader(
             "Schedule 125 - Income Statement",
             type=["pdf"],
             key="schedule-125",
-            help="Upload the searchable Schedule 125 PDF exported from tax software.",
+            help="Upload the original Schedule 125 PDF exported from tax software. Form fields and OCR are supported.",
         )
 
         st.markdown("**Corporation and reporting period**")
