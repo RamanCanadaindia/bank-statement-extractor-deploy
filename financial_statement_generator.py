@@ -159,6 +159,18 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
     standalone_amount_pattern = re.compile(
         rf"^\s*(?P<amount>{amount_pattern})(?:\s+{amount_pattern})?\s*$"
     )
+    amount_token_pattern = re.compile(
+        r"\(?-?\$?\s*(?:\d{1,3}(?:[,\s]\d{3})+|\d+)(?:\.\d{1,2})?\)?"
+    )
+    known_labels = sorted(
+        (
+            (code, label, re.sub(r"[^a-z0-9]+", " ", label.lower()).strip())
+            for code, label in GIFI_LABELS.items()
+            if code in allowed
+        ),
+        key=lambda item: len(item[2]),
+        reverse=True,
+    )
 
     def append_row(code: int, amount_text: str, description: str = "") -> bool:
         if code not in allowed:
@@ -186,6 +198,28 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
             if append_row(code, match.group("amount"), match.groupdict().get("desc", "")):
                 pending_description = ""
                 pending_code = None
+            continue
+
+        normalized_line = re.sub(r"[^a-z0-9]+", " ", line.lower()).strip()
+        label_match = next(
+            (
+                (code, label)
+                for code, label, normalized_label in known_labels
+                if normalized_label and normalized_label in normalized_line
+            ),
+            None,
+        )
+        if label_match:
+            code, label = label_match
+            amount_candidates = amount_token_pattern.findall(line)
+            # Labels do not contain numbers. If OCR also captured a GIFI code,
+            # the right-most numeric token remains the statement amount.
+            if amount_candidates and append_row(code, amount_candidates[-1], label):
+                pending_description = ""
+                pending_code = None
+            else:
+                pending_description = label
+                pending_code = code
             continue
 
         code_match = standalone_code_pattern.match(line)
@@ -359,13 +393,10 @@ def extract_tesseract_text(pdf_bytes: bytes) -> str:
         for page in document:
             pixmap = page.get_pixmap(matrix=matrix, alpha=False, colorspace=fitz.csRGB)
             image = Image.open(io.BytesIO(pixmap.tobytes("png")))
-            image = ImageOps.autocontrast(ImageOps.grayscale(image))
-            output.append(
-                pytesseract.image_to_string(
-                    image,
-                    config="--oem 3 --psm 6",
-                )
-            )
+            grayscale = ImageOps.autocontrast(ImageOps.grayscale(image))
+            output.append(pytesseract.image_to_string(grayscale, config="--oem 3 --psm 6"))
+            thresholded = grayscale.point(lambda value: 0 if value < 185 else 255)
+            output.append(pytesseract.image_to_string(thresholded, config="--oem 3 --psm 11"))
         document.close()
         return "\n".join(output)
     except Exception:

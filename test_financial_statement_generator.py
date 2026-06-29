@@ -74,6 +74,21 @@ class FinancialStatementGeneratorTests(unittest.TestCase):
         self.assertEqual(result.entries.iloc[0]["Description"], "Cash")
         self.assertEqual(float(result.entries.iloc[0]["Amount"]), 25000)
 
+    def test_known_labels_recover_rows_when_ocr_misses_gifi_codes(self):
+        result = generator.parse_schedule_text(
+            "Cash $25,000\n"
+            "Total assets $25,000\n"
+            "Total liabilities $10,000\n"
+            "Total shareholder equity $15,000\n"
+            "Total liabilities and shareholder equity $25,000",
+            "100",
+        )
+        self.assertEqual(
+            float(result.entries.loc[result.entries["Code"] == 2599, "Amount"].iloc[0]),
+            25000,
+        )
+        self.assertEqual(result.warnings, [])
+
     def test_acroform_gifi_fields_are_supported(self):
         from reportlab.pdfgen import canvas
 
