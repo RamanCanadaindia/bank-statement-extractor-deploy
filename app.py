@@ -651,39 +651,41 @@ def process_statement(uploaded_file, selected_bank: str) -> dict:
 
     rows = []
     direct_error = None
-    scanned_td_attempted = False
+    scanned_ocr_attempted = False
     image_only_pdf = (
         input_path.suffix.lower() == ".pdf"
         and not extractor.read_pdf_text(input_path).strip()
     )
-    if image_only_pdf and bank in {"TD", "Other bank"}:
-        scanned_td_attempted = True
+    if image_only_pdf:
+        scanned_ocr_attempted = True
         try:
-            rows = extractor.extract_scanned_td_pdf_transactions(input_path)
-            if rows and bank == "Other bank":
-                bank = "TD"
+            rows = extractor.extract_scanned_debit_credit_pdf_transactions(input_path)
         except RuntimeError as exc:
             direct_error = exc
 
-    if input_path.suffix.lower() == ".pdf" and bank not in {"BMO", "TD", "Other bank"}:
+    if input_path.suffix.lower() == ".pdf" and not image_only_pdf:
         try:
             rows = extractor.extract_from_statement_file(input_path, bank)
         except RuntimeError as exc:
             direct_error = exc
 
     if not rows:
-        if scanned_td_attempted:
+        if scanned_ocr_attempted:
             if direct_error is not None:
                 raise RuntimeError(
-                    f"The scanned TD reader could not process this file: {direct_error}"
+                    f"The scanned statement reader could not process this file: {direct_error}"
                 ) from direct_error
             raise RuntimeError(
-                "The scanned TD reader did not find Date, Description, Debit, Credit, "
-                "and Balance columns. No Excel file was created."
+                "The scanned statement reader did not find recognizable Date, Description, "
+                "Debit/Withdrawal, Credit/Deposit, and Balance columns. No Excel file was created."
             )
         effective_path = input_path
         if input_path.suffix.lower() == ".pdf":
-            effective_path = docling_json_for_pdf(input_path, work_dir)
+            detail = f": {direct_error}" if direct_error is not None else ""
+            raise RuntimeError(
+                "This PDF layout did not match a safe local extractor. The website did not "
+                f"start the memory-heavy Docling fallback{detail}"
+            )
         try:
             rows = extractor.extract_from_statement_file(effective_path, bank)
         except Exception as exc:
@@ -1225,7 +1227,10 @@ if selected_page == "Extract statements":
             help="Upload one statement or several monthly statements.",
         )
         process_clicked = st.button("Extract transactions", type="primary", use_container_width=True)
-        st.caption("Tuned: BMO, CIBC, RBC bank accounts, RBC Visa Business and Tangerine. TD and other banks use the Docling fallback.")
+        st.caption(
+            "Tuned: BMO, CIBC, RBC bank accounts, RBC Visa Business, Tangerine, "
+            "Vancity, and scanned debit/credit tables. Large PDFs are processed page by page."
+        )
 
     with right:
         st.subheader("Processing status")

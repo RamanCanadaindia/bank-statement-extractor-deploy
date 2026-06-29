@@ -738,7 +738,18 @@ def parse_scanned_debit_credit_ocr_data(data: dict[str, list[Any]]) -> list[Pars
         )
 
     header = None
-    for debit_token in (token for token in tokens if token["text"].lower().startswith("debit")):
+    header_aliases = {
+        "date": ("date",),
+        "description": ("description",),
+        "debit": ("debit", "withdrawal"),
+        "credit": ("credit", "deposit"),
+        "balance": ("balance",),
+    }
+    for debit_token in (
+        token
+        for token in tokens
+        if token["text"].lower().startswith(header_aliases["debit"])
+    ):
         band = [
             token
             for token in tokens
@@ -746,7 +757,11 @@ def parse_scanned_debit_credit_ocr_data(data: dict[str, list[Any]]) -> list[Pars
         ]
         by_name = {
             name: next(
-                (token for token in band if token["text"].lower().startswith(name)),
+                (
+                    token
+                    for token in band
+                    if token["text"].lower().startswith(header_aliases[name])
+                ),
                 None,
             )
             for name in ("date", "description", "debit", "credit", "balance")
@@ -840,8 +855,8 @@ def parse_scanned_debit_credit_ocr_data(data: dict[str, list[Any]]) -> list[Pars
     return parsed
 
 
-def extract_scanned_td_pdf_transactions(path: Path) -> list[ParsedLine]:
-    """OCR a scanned TD activity report one page at a time to limit server memory."""
+def extract_scanned_debit_credit_pdf_transactions(path: Path) -> list[ParsedLine]:
+    """OCR a scanned bank table one page at a time to limit server memory."""
     try:
         import fitz
         import pytesseract
@@ -873,6 +888,11 @@ def extract_scanned_td_pdf_transactions(path: Path) -> list[ParsedLine]:
     finally:
         document.close()
     return dedupe_transactions(parsed)
+
+
+def extract_scanned_td_pdf_transactions(path: Path) -> list[ParsedLine]:
+    """Backward-compatible name for the generic low-memory scanned PDF reader."""
+    return extract_scanned_debit_credit_pdf_transactions(path)
 
 
 def dedupe_transactions(rows: Iterable[ParsedLine]) -> list[ParsedLine]:
