@@ -659,7 +659,8 @@ def parse_table_rows(tables: list[list[list[str]]]) -> list[ParsedLine]:
 
     for table in tables:
         for row in table:
-            cells = [clean_text(cell) for cell in row if clean_text(cell)]
+            raw_cells = [clean_text(cell) for cell in row]
+            cells = [cell for cell in raw_cells if cell]
             if not cells:
                 continue
 
@@ -671,14 +672,16 @@ def parse_table_rows(tables: list[list[list[str]]]) -> list[ParsedLine]:
 
             # Prefer structured table columns when they resemble:
             # Date | Description | Debit | Credit | Balance
-            if len(cells) >= 5 and DATE_RE.search(cells[0]):
-                debit = parse_amount(cells[-3])
-                credit = parse_amount(cells[-2])
-                balance = parse_amount(cells[-1])
-                description = " ".join(cells[1:-3])
+            # Keep empty cells because they identify which side an amount was
+            # printed on. Removing them can shift a credit into the debit column.
+            if len(raw_cells) >= 5 and DATE_RE.search(raw_cells[0]):
+                debit = parse_amount(raw_cells[-3])
+                credit = parse_amount(raw_cells[-2])
+                balance = parse_amount(raw_cells[-1])
+                description = " ".join(cell for cell in raw_cells[1:-3] if cell)
                 parsed.append(
                     ParsedLine(
-                        date=DATE_RE.search(cells[0]).group("date"),
+                        date=DATE_RE.search(raw_cells[0]).group("date"),
                         description=description,
                         debit=abs(debit) if debit else None,
                         credit=abs(credit) if credit else None,

@@ -567,14 +567,32 @@ def safe_name(value: str) -> str:
 
 def docling_json_for_pdf(pdf_path: Path, work_dir: Path) -> Path:
     try:
-        from docling.document_converter import DocumentConverter
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions,
+            TesseractCliOcrOptions,
+        )
+        from docling.document_converter import DocumentConverter, PdfFormatOption
     except ImportError as exc:
         raise RuntimeError(
             "BMO PDF conversion requires Docling. Install the website requirements and restart the app."
         ) from exc
 
     json_path = work_dir / f"{pdf_path.stem}.docling.json"
-    result = DocumentConverter().convert(str(pdf_path))
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.do_ocr = True
+    pipeline_options.do_table_structure = True
+    pipeline_options.ocr_options = TesseractCliOcrOptions(
+        lang=["eng"],
+        force_full_page_ocr=True,
+        psm=6,
+    )
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+        }
+    )
+    result = converter.convert(str(pdf_path))
     document = result.document
     if hasattr(document, "export_to_dict"):
         data = document.export_to_dict()
