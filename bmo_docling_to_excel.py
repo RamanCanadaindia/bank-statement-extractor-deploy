@@ -711,6 +711,14 @@ def parse_scanned_debit_credit_ocr_data(data: dict[str, list[Any]]) -> list[Pars
     """Parse positioned Tesseract output for Date/Description/Debit/Credit/Balance tables."""
     tokens: list[dict[str, Any]] = []
     count = len(data.get("text", []))
+    page_width = max(
+        (
+            int(data.get("left", [0] * count)[index])
+            + int(data.get("width", [0] * count)[index])
+            for index in range(count)
+        ),
+        default=0,
+    )
     for index in range(count):
         text = clean_text(data["text"][index])
         if not text:
@@ -769,16 +777,38 @@ def parse_scanned_debit_credit_ocr_data(data: dict[str, list[Any]]) -> list[Pars
         if all(by_name.values()):
             header = by_name
             break
-    if not header:
-        return []
 
-    amount_start = (header["description"]["cx"] + header["debit"]["cx"]) / 2
-    column_centers = {
-        "debit": header["debit"]["cx"],
-        "credit": header["credit"]["cx"],
-        "balance": header["balance"]["cx"],
+    normalized_words = {
+        re.sub(r"[^a-z]+", "", token["text"].lower()) for token in tokens
     }
-    table_tokens = [token for token in tokens if token["cy"] > header["debit"]["cy"] + 8]
+    is_td_historical = {
+        "account",
+        "activity",
+        "historical",
+        "details",
+    }.issubset(normalized_words)
+    if header:
+        amount_start = (header["description"]["cx"] + header["debit"]["cx"]) / 2
+        column_centers = {
+            "debit": header["debit"]["cx"],
+            "credit": header["credit"]["cx"],
+            "balance": header["balance"]["cx"],
+        }
+        table_tokens = [
+            token for token in tokens if token["cy"] > header["debit"]["cy"] + 8
+        ]
+    elif is_td_historical and page_width:
+        # TD's grey historical-activity header often disappears during OCR.
+        # Its three money columns remain fixed, so infer them from page width.
+        amount_start = page_width * 0.57
+        column_centers = {
+            "debit": page_width * 0.65,
+            "credit": page_width * 0.775,
+            "balance": page_width * 0.87,
+        }
+        table_tokens = tokens
+    else:
+        return []
 
     lines: list[list[dict[str, Any]]] = []
     for token in sorted(table_tokens, key=lambda item: (item["cy"], item["x"])):
@@ -799,12 +829,11 @@ def parse_scanned_debit_credit_ocr_data(data: dict[str, list[Any]]) -> list[Pars
             matching_line.append(token)
 
     parsed: list[ParsedLine] = []
+    last_date_value: str | None = None
     for line in lines:
         ordered = sorted(line, key=lambda item: item["x"])
         line_text = " ".join(item["text"] for item in ordered)
         date_match = SCANNED_DATE_RE.search(line_text)
-        if not date_match:
-            continue
 
         column_tokens: dict[str, list[dict[str, Any]]] = {
             "debit": [],
@@ -833,15 +862,29 @@ def parse_scanned_debit_credit_ocr_data(data: dict[str, list[Any]]) -> list[Pars
         description_text = " ".join(
             item["text"] for item in ordered if id(item) not in amount_token_ids
         )
-        description = clean_text(SCANNED_DATE_RE.sub("", description_text, count=1))
+        if date_match:
+            date_value = datetime(
+                int(date_match.group("year")),
+                datetime.strptime(date_match.group("month")[:3].title(), "%b").month,
+                int(date_match.group("day")),
+            ).strftime("%Y-%m-%d")
+            last_date_value = date_value
+            description_text = SCANNED_DATE_RE.sub("", description_text, count=1)
+        elif last_date_value:
+            date_value = last_date_value
+            description_text = re.sub(
+                r"^[A-Za-z]{2,6}\W*\d{1,2}\W*(?:\d{4})?\W*",
+                "",
+                description_text,
+                count=1,
+            )
+        else:
+            continue
+
+        description = clean_text(description_text)
         if not description:
             continue
 
-        date_value = datetime(
-            int(date_match.group("year")),
-            datetime.strptime(date_match.group("month")[:3].title(), "%b").month,
-            int(date_match.group("day")),
-        ).strftime("%Y-%m-%d")
         parsed.append(
             ParsedLine(
                 date=date_value,
