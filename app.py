@@ -1024,6 +1024,234 @@ def build_payslip_pdf(company: dict, employee: dict, payroll: dict, calc: dict) 
     return buffer.getvalue()
 
 
+def build_payslip_excel(company: dict, employee: dict, payroll: dict, calc: dict) -> bytes:
+    """Create an editable payroll statement matching the PDF payslip."""
+    rows = [
+        ["Company", company["name"], "", ""],
+        ["Company address", company["address"], "", ""],
+        ["Employee", employee["name"], "Pay date", payroll["pay_date"]],
+        ["Position", employee["position"], "Pay period", f"{payroll['pay_start']} to {payroll['pay_end']}"],
+        ["Frequency", payroll["frequency"], "Province", employee.get("province", "British Columbia")],
+        ["", "", "", ""],
+        ["Earnings", "Amount", "Deductions", "Amount"],
+        ["Regular pay", calc["regular_pay"], "CPP", calc["cpp"]],
+        ["Overtime pay", calc["overtime_pay"], "EI", calc["ei"]],
+        ["Stat pay", payroll["stat_pay"], "Federal tax", calc["tax_fed"]],
+        ["Sick pay", payroll["sick_pay"], "Provincial tax", calc["tax_prov"]],
+        ["Vacation pay", payroll["vacation_pay"], "Other deductions", calc["other_deductions"]],
+        ["Bonus", payroll["bonus"], "Total deductions", calc["total_deductions"]],
+        ["Gross pay", calc["gross"], "Reimbursements", calc["reimbursements"]],
+        ["", "", "Net pay", calc["net"]],
+        ["", "", "", ""],
+        ["Employer CPP", calc["employer_cpp"], "Employer EI", calc["employer_ei"]],
+        ["Review payroll deductions against CRA PDOC before remitting or filing.", "", "", ""],
+    ]
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="Payslip", index=False, header=False)
+        ws = writer.book["Payslip"]
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        fill = PatternFill("solid", fgColor="E8EEF7")
+        for cell in ws[7]:
+            cell.font = Font(bold=True)
+            cell.fill = fill
+        for row_number in range(8, 18):
+            ws.cell(row=row_number, column=2).number_format = '$#,##0.00'
+            ws.cell(row=row_number, column=4).number_format = '$#,##0.00'
+        for column, width in {"A": 27, "B": 18, "C": 25, "D": 18}.items():
+            ws.column_dimensions[column].width = width
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="top")
+        ws.freeze_panes = "A7"
+    return buffer.getvalue()
+
+
+def _pd7a_values(calc: dict) -> dict:
+    income_tax = round(calc["tax_fed"] + calc["tax_prov"], 2)
+    employee_cpp = round(calc["cpp"], 2)
+    employer_cpp = round(calc["employer_cpp"], 2)
+    employee_ei = round(calc["ei"], 2)
+    employer_ei = round(calc["employer_ei"], 2)
+    total_cpp = round(employee_cpp + employer_cpp, 2)
+    total_ei = round(employee_ei + employer_ei, 2)
+    return {
+        "income_tax": income_tax,
+        "employee_cpp": employee_cpp,
+        "employer_cpp": employer_cpp,
+        "employee_ei": employee_ei,
+        "employer_ei": employer_ei,
+        "total_cpp": total_cpp,
+        "total_ei": total_ei,
+        "total_remittance": round(income_tax + total_cpp + total_ei, 2),
+    }
+
+
+def build_pd7a_excel(company: dict, payroll: dict, calc: dict) -> bytes:
+    """Create a PD7A-style remittance worksheet for CRA entry and review."""
+    values = _pd7a_values(calc)
+    rows = [
+        ["PD7A-style payroll remittance summary", "", ""],
+        ["Use this worksheet to complete CRA remittance entry or an official voucher.", "", ""],
+        ["Employer name", company["name"], ""],
+        ["Payroll account number", company.get("payroll_account", ""), ""],
+        ["Remittance period", f"{payroll['pay_start']} to {payroll['pay_end']}", ""],
+        ["Payment date", payroll["pay_date"], ""],
+        ["", "", ""],
+        ["Line", "Description", "Amount"],
+        ["Gross payroll", "Total gross remuneration for the period", calc["gross"]],
+        ["Income tax", "Federal and provincial income tax deducted", values["income_tax"]],
+        ["Employee CPP", "CPP deducted from employee", values["employee_cpp"]],
+        ["Employer CPP", "Employer CPP contribution", values["employer_cpp"]],
+        ["Total CPP", "Employee CPP plus employer CPP", values["total_cpp"]],
+        ["Employee EI", "EI deducted from employee", values["employee_ei"]],
+        ["Employer EI", "Employer EI contribution", values["employer_ei"]],
+        ["Total EI", "Employee EI plus employer EI", values["total_ei"]],
+        ["Total remittance", "Income tax plus total CPP plus total EI", values["total_remittance"]],
+        ["", "", ""],
+        ["Review against CRA PDOC and payroll remittance records before paying.", "", ""],
+    ]
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="PD7A Summary", index=False, header=False)
+        ws = writer.book["PD7A Summary"]
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        header_fill = PatternFill("solid", fgColor="E8EEF7")
+        total_fill = PatternFill("solid", fgColor="DDEBFF")
+        ws["A1"].font = Font(bold=True, size=14)
+        for cell in ws[8]:
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+        for row_number in range(9, 18):
+            ws.cell(row=row_number, column=3).number_format = '$#,##0.00'
+        for cell in ws[17]:
+            cell.font = Font(bold=True)
+            cell.fill = total_fill
+        for column, width in {"A": 24, "B": 54, "C": 18}.items():
+            ws.column_dimensions[column].width = width
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="top")
+    return buffer.getvalue()
+
+
+def build_pd7a_pdf(company: dict, payroll: dict, calc: dict) -> bytes:
+    """Create a polished PD7A-style PDF summary for payroll records."""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ImportError as exc:
+        raise RuntimeError("PD7A PDF requires reportlab. Install requirements and restart the app.") from exc
+
+    values = _pd7a_values(calc)
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=0.65 * inch,
+        rightMargin=0.65 * inch,
+        topMargin=0.65 * inch,
+        bottomMargin=0.65 * inch,
+    )
+    styles = getSampleStyleSheet()
+    navy = colors.HexColor("#16324F")
+    teal = colors.HexColor("#087F8C")
+    line = colors.HexColor("#D5DEE8")
+
+    header = Table(
+        [
+            [
+                Paragraph(
+                    f"<font color='#FFFFFF' size='16'><b>{company['name']}</b></font><br/>"
+                    f"<font color='#DDE8F1' size='8'>{company['address']}<br/>"
+                    f"Payroll account: {company.get('payroll_account') or 'Not entered'}</font>",
+                    styles["Normal"],
+                ),
+                Paragraph(
+                    "<para alignment='right'><font color='#FFFFFF' size='18'><b>PD7A SUMMARY</b></font></para>",
+                    styles["Normal"],
+                ),
+            ]
+        ],
+        colWidths=[4.4 * inch, 2.8 * inch],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, 0), navy),
+                ("BACKGROUND", (1, 0), (1, 0), teal),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 14),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+            ]
+        )
+    )
+    details = Table(
+        [
+            ["REMITTANCE PERIOD", f"{payroll['pay_start']} to {payroll['pay_end']}"],
+            ["PAY DATE", str(payroll["pay_date"])],
+            ["GROSS PAYROLL", f"${calc['gross']:,.2f}"],
+        ],
+        colWidths=[1.75 * inch, 5.45 * inch],
+    )
+    details.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EEF3F8")),
+                ("GRID", (0, 0), (-1, -1), 0.35, line),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    remittance = Table(
+        [
+            ["SOURCE DEDUCTION", "EMPLOYEE", "EMPLOYER", "TOTAL"],
+            ["Income tax", f"${values['income_tax']:,.2f}", "-", f"${values['income_tax']:,.2f}"],
+            ["CPP contributions", f"${values['employee_cpp']:,.2f}", f"${values['employer_cpp']:,.2f}", f"${values['total_cpp']:,.2f}"],
+            ["EI premiums", f"${values['employee_ei']:,.2f}", f"${values['employer_ei']:,.2f}", f"${values['total_ei']:,.2f}"],
+            ["TOTAL REMITTANCE DUE", "", "", f"${values['total_remittance']:,.2f}"],
+        ],
+        colWidths=[3.0 * inch, 1.4 * inch, 1.4 * inch, 1.4 * inch],
+    )
+    remittance.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), navy),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("GRID", (0, 0), (-1, -1), 0.35, line),
+                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EAF6F7")),
+                ("TEXTCOLOR", (0, -1), (-1, -1), teal),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ]
+        )
+    )
+    note = Paragraph(
+        "<font color='#64748B' size='8'>PD7A-style summary for recordkeeping and CRA remittance entry. "
+        "Review the amounts against CRA payroll records before making payment.</font>",
+        styles["Normal"],
+    )
+    doc.build([header, Spacer(1, 12), details, Spacer(1, 14), remittance, Spacer(1, 12), note])
+    return buffer.getvalue()
+
+
 def save_uploaded_file(uploaded_file, folder: Path) -> Path | None:
     if uploaded_file is None:
         return None
@@ -1484,6 +1712,24 @@ if selected_page == "Payroll template":
             file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.pdf",
             mime="application/pdf",
             type="primary",
+        )
+        st.download_button(
+            "Download payslip Excel",
+            data=build_payslip_excel(saved["company"], saved["employee"], pdf_payroll, calc),
+            file_name=f"{safe_name(saved['employee']['name']) or 'Employee'}_{saved['payroll']['pay_date']}_payslip.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        st.download_button(
+            "Download PD7A summary Excel",
+            data=build_pd7a_excel(saved["company"], saved["payroll"], calc),
+            file_name=f"PD7A_Remittance_{saved['payroll']['pay_date']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        st.download_button(
+            "Download PD7A summary PDF",
+            data=build_pd7a_pdf(saved["company"], saved["payroll"], calc),
+            file_name=f"PD7A_Remittance_{saved['payroll']['pay_date']}.pdf",
+            mime="application/pdf",
         )
         register_bytes = export_payroll_register(saved["updated_register"])
         st.download_button(
