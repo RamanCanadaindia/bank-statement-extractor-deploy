@@ -23,6 +23,7 @@ sys.path.insert(0, str(APP_DIR))
 import bmo_docling_to_excel as extractor
 import financial_statement_generator as fs_generator
 import mortgage_calculator as mortgage
+import transaction_categorizer as categorizer
 from real_estate_research_agent import (
     Assumptions as InvestmentAssumptions,
     RentalProvider,
@@ -363,7 +364,7 @@ def render_public_home() -> None:
         '<div class="public-hero-copy">'
         '<span class="rfs-kicker">Accounting and financial tools</span>'
         "<h1>Financial work, organized.</h1>"
-        "<p>Prepare bank transactions, annual workbooks, payroll records, compiled financial "
+        "<p>Prepare bank transactions, automatic bookkeeping categories, annual workbooks, payroll records, compiled financial "
         "statements, mortgage estimates, and real estate investment analysis in one workspace.</p>"
         '<div class="public-actions">'
         '<a href="?view=workspace">Open secure tools</a>'
@@ -382,11 +383,12 @@ def render_public_home() -> None:
     )
     public_tools = [
         ("01", "Statement extraction", "Convert supported bank and credit-card statements into organized transactions."),
-        ("02", "Annual workbooks", "Combine verified monthly files while preserving statement order and separation."),
-        ("03", "Payroll records", "Calculate payroll, update annual registers, and prepare employee payslips."),
-        ("04", "Financial statements", "Create reviewable draft statements from Schedule 100 and Schedule 125 PDFs."),
-        ("05", "Mortgage planning", "Estimate mortgage capacity using the Gross Debt Service calculation."),
-        ("06", "Investment analysis", "Compare property costs, cash flow, rents, and supporting market inputs."),
+        ("02", "Auto categorization", "Apply reviewable bookkeeping categories using merchant and transaction-direction rules."),
+        ("03", "Annual workbooks", "Combine verified monthly files while preserving statement order and separation."),
+        ("04", "Payroll records", "Calculate payroll, update annual registers, and prepare employee payslips."),
+        ("05", "Financial statements", "Create reviewable draft statements from Schedule 100 and Schedule 125 PDFs."),
+        ("06", "Mortgage planning", "Estimate mortgage capacity using the Gross Debt Service calculation."),
+        ("07", "Investment analysis", "Compare property costs, cash flow, rents, and supporting market inputs."),
     ]
     for row_start in range(0, len(public_tools), 3):
         columns = st.columns(3)
@@ -1321,6 +1323,7 @@ def real_estate_excel_bytes(database: pd.DataFrame, top: pd.DataFrame) -> bytes:
 NAV_ITEMS = [
     "Dashboard",
     "Extract statements",
+    "Auto categorize",
     "Build annual file",
     "Payroll template",
     "Financial statements",
@@ -1331,6 +1334,7 @@ NAV_ITEMS = [
 PAGE_COPY = {
     "Dashboard": "Choose a workspace and continue your accounting work.",
     "Extract statements": "Upload bank statements and review extracted transactions.",
+    "Auto categorize": "Apply reviewable bookkeeping categories to Excel or CSV transactions.",
     "Build annual file": "Combine verified monthly workbooks in statement order.",
     "Payroll template": "Calculate payroll and maintain the annual payroll register.",
     "Financial statements": "Prepare draft compiled financial statements from T2 schedules.",
@@ -1384,7 +1388,7 @@ st.markdown(
 if selected_page == "Dashboard":
     st.markdown('<span class="rfs-kicker">Workspace</span>', unsafe_allow_html=True)
     overview_cols = st.columns(3)
-    overview_cols[0].metric("Accounting workspaces", "6")
+    overview_cols[0].metric("Accounting workspaces", "7")
     overview_cols[1].metric("Supported statement sources", "8")
     overview_cols[2].metric("Output formats", "Excel, PDF, Word")
 
@@ -1394,6 +1398,11 @@ if selected_page == "Dashboard":
             "Extract statements",
             "Bank transactions",
             "Convert monthly bank and credit-card statements into reviewable transactions.",
+        ),
+        (
+            "Auto categorize",
+            "Bookkeeping categories",
+            "Categorize existing transaction files with reusable merchant and direction rules.",
         ),
         (
             "Build annual file",
@@ -1559,6 +1568,134 @@ if selected_page == "Build annual file":
                     st.dataframe(transactions, use_container_width=True, hide_index=True)
             except Exception as exc:
                 st.error(str(exc))
+
+if selected_page == "Auto categorize":
+    st.subheader("Automatic transaction categorization")
+    st.caption(
+        "Upload an Excel or CSV transaction file. Categories are assigned using local merchant "
+        "and transaction-direction rules, then remain editable before download."
+    )
+    st.info(
+        "Low-confidence and uncategorized transactions are marked for review. "
+        "No transaction descriptions are sent to an external AI service."
+    )
+
+    upload_cols = st.columns([2, 1])
+    transaction_file = upload_cols[0].file_uploader(
+        "Transaction file",
+        type=["xlsx", "csv"],
+        key="categorizer-transactions",
+        help="Supports Amount columns and separate Debit/Credit columns.",
+    )
+    custom_rule_file = upload_cols[1].file_uploader(
+        "Custom rule CSV (optional)",
+        type=["csv"],
+        key="categorizer-rules",
+        help="Columns: Keyword, Category, Applies To.",
+    )
+    st.download_button(
+        "Download custom rule template",
+        data=categorizer.custom_rule_template(),
+        file_name="Category_Rules_Template.csv",
+        mime="text/csv",
+    )
+    overwrite_categories = st.checkbox(
+        "Replace existing nonblank categories",
+        value=False,
+        help="Opening Balance and Closing Totals are always protected.",
+    )
+
+    if st.button("Categorize transactions", type="primary"):
+        if transaction_file is None:
+            st.error("Upload an Excel or CSV transaction file.")
+        else:
+            try:
+                custom_rules = []
+                if custom_rule_file is not None:
+                    custom_frame = pd.read_csv(io.BytesIO(custom_rule_file.getvalue()))
+                    custom_rules = categorizer.parse_custom_rules(custom_frame)
+                transactions = categorizer.load_transactions(
+                    transaction_file.getvalue(),
+                    transaction_file.name,
+                )
+                categorized = categorizer.categorize_transactions(
+                    transactions,
+                    custom_rules=custom_rules,
+                    overwrite_existing=overwrite_categories,
+                )
+                st.session_state["categorization_result"] = {
+                    "frame": categorized,
+                    "source": transaction_file.name,
+                    "custom_rules": len(custom_rules),
+                }
+            except Exception as exc:
+                st.error(str(exc))
+
+    category_result = st.session_state.get("categorization_result")
+    if category_result:
+        categorized = category_result["frame"]
+        review_mask = categorized["Category Confidence"].isin(["Low", "Review"])
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("Transactions", len(categorized))
+        metric_cols[1].metric(
+            "Categorized",
+            int((categorized["Category"] != "Uncategorized").sum()),
+        )
+        metric_cols[2].metric("Needs review", int(review_mask.sum()))
+        metric_cols[3].metric("Custom rules", category_result["custom_rules"])
+
+        category_options = sorted(
+            {
+                rule.category
+                for rule in categorizer.DEFAULT_RULES
+            }
+            | set(categorized["Category"].dropna().astype(str))
+            | {"Uncategorized"}
+        )
+        edited = st.data_editor(
+            categorized,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[
+                column
+                for column in categorized.columns
+                if column != "Category"
+            ],
+            column_config={
+                "Category": st.column_config.SelectboxColumn(
+                    "Category",
+                    options=category_options,
+                    required=True,
+                ),
+                "Amount": st.column_config.NumberColumn(
+                    "Amount",
+                    format="$%.2f",
+                ),
+            },
+            key="categorization-editor",
+        )
+
+        summary = categorizer.category_summary(edited)
+        with st.expander("Category summary", expanded=True):
+            st.dataframe(
+                summary,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Net Amount": st.column_config.NumberColumn(
+                        "Net Amount",
+                        format="$%.2f",
+                    )
+                },
+            )
+        safe_stem = safe_name(Path(category_result["source"]).stem) or "Transactions"
+        st.download_button(
+            "Download categorized Excel",
+            data=categorizer.export_categorized_workbook(edited),
+            file_name=f"{safe_stem}_Categorized.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+        )
 
 if selected_page == "Payroll template":
     st.subheader("Payroll calculator")
@@ -2219,6 +2356,14 @@ if selected_page == "Guide":
         "2. Compare total debits, credits, opening balance and closing balance with the statement.\n"
         "3. Keep original PDFs until the annual accounting file is complete.\n"
         "4. Merge the verified monthly workbooks into an annual workbook."
+    )
+    st.subheader("Automatic categorization")
+    st.markdown(
+        "1. Open **Auto categorize** and upload an extracted Excel workbook or transaction CSV.\n"
+        "2. Keep **Replace existing nonblank categories** off when you want to preserve reviewed work.\n"
+        "3. Optionally upload a custom rule CSV for recurring merchants or customers.\n"
+        "4. Review all rows marked **Low** or **Review** and change the Category directly in the table.\n"
+        "5. Download the categorized workbook with its Category Summary and Built-in Rules sheets."
     )
     st.subheader("Financial statement files")
     st.markdown(
