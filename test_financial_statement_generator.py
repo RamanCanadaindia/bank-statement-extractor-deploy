@@ -150,6 +150,44 @@ class FinancialStatementGeneratorTests(unittest.TestCase):
         self.assertEqual(result.warnings, [])
         self.assertIn(2599, result.entries["Code"].tolist())
 
+    def test_condensed_gifi_uses_current_year_not_prior_year(self):
+        text = """Name of corporation : 1386371 B.C. LTD. 2025/06/30
+Deposits in Canadian banks and institutions: CDN currency 1002 + 7,812 2,089
+Total current assets 1599 = 7,812 2,089
+Motor vehicles 1742 + 16,500
+Accumulated amortization of motor vehicles 1743 - 2,475
+Total tangible capital assets 2008 = 16,500
+Total accumulated amortization of capital assets 2009 = 2,475
+Total Assets 2599 = 21,837 2,089
+Taxes payable 2680 + 907 215
+Total current liabilities 3139 = 907 215
+Due to individual shareholder(s) 3261 + 17,253 2,113
+Common shares 3500 + 100 100
+Retained earnings/deficit 3600 + 3,577 (339)
+Total shareholder equity 3620 = 3,677 (239)
+Total Liabilities and Shareholder's Equity = 21,837 2,089
+"""
+        result = generator.parse_schedule_text(text, "100")
+        self.assertEqual(float(result.entries.loc[result.entries["Code"] == 1002, "Amount"].iloc[0]), 7812)
+        self.assertEqual(float(result.entries.loc[result.entries["Code"] == 2680, "Amount"].iloc[0]), 907)
+        self.assertEqual(float(result.entries.loc[result.entries["Code"] == 1743, "Amount"].iloc[0]), -2475)
+        self.assertEqual(float(result.entries.loc[result.entries["Code"] == 3499, "Amount"].iloc[0]), 18160)
+        self.assertEqual(result.warnings, [])
+
+    def test_combined_pdf_metadata_is_detected(self):
+        from reportlab.pdfgen import canvas
+
+        buffer = io.BytesIO()
+        pdf = canvas.Canvas(buffer)
+        pdf.drawString(72, 760, "Business Number : 791178619 Tax year end")
+        pdf.drawString(72, 740, "Name of corporation : 1386371 B.C. LTD. 2025/06/30")
+        pdf.drawString(72, 720, "BN: 791178619RC0001")
+        pdf.save()
+        metadata = generator.extract_statement_metadata(buffer.getvalue())
+        self.assertEqual(metadata["company_name"], "1386371 B.C. LTD.")
+        self.assertEqual(metadata["business_number"], "791178619RC0001")
+        self.assertEqual(metadata["year_end"], date(2025, 6, 30))
+
     def test_report_outputs_are_created(self):
         pdf = generator.build_financial_statement_pdf(self.balance.entries, self.income.entries, self.metadata)
         docx = generator.build_financial_statement_docx(self.balance.entries, self.income.entries, self.metadata)

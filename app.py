@@ -1499,7 +1499,7 @@ if selected_page == "Payroll template":
 if selected_page == "Financial statements":
     st.subheader("Compiled financial statements")
     st.caption(
-        "Upload T2 Schedule 100 and Schedule 125. The app extracts GIFI amounts and creates "
+        "Upload one combined S100/S125 PDF or two separate schedule PDFs. The app extracts current-year GIFI amounts and creates "
         "a draft Compilation Engagement Report package (formerly called Notice to Reader)."
     )
     st.warning(
@@ -1508,25 +1508,44 @@ if selected_page == "Financial statements":
     )
 
     with st.form("financial-statements-form"):
-        file_cols = st.columns(2)
-        schedule_100_file = file_cols[0].file_uploader(
-            "Schedule 100 - Balance Sheet",
+        combined_schedule_file = st.file_uploader(
+            "Combined Schedule 100 and Schedule 125 PDF",
             type=["pdf"],
-            key="schedule-100",
-            help="Upload the original Schedule 100 PDF exported from tax software. Form fields and OCR are supported.",
+            key="combined-schedule-100-125",
+            help="Upload the PDF package containing both the balance sheet and income statement GIFI schedules.",
         )
-        schedule_125_file = file_cols[1].file_uploader(
-            "Schedule 125 - Income Statement",
-            type=["pdf"],
-            key="schedule-125",
-            help="Upload the original Schedule 125 PDF exported from tax software. Form fields and OCR are supported.",
-        )
+        with st.expander("Or upload Schedule 100 and Schedule 125 separately"):
+            file_cols = st.columns(2)
+            schedule_100_file = file_cols[0].file_uploader(
+                "Schedule 100 - Balance Sheet",
+                type=["pdf"],
+                key="schedule-100",
+            )
+            schedule_125_file = file_cols[1].file_uploader(
+                "Schedule 125 - Income Statement",
+                type=["pdf"],
+                key="schedule-125",
+            )
 
         st.markdown("**Corporation and reporting period**")
+        fs_auto_details = st.checkbox(
+            "Read corporation name, business number, and fiscal year end from the PDF",
+            value=True,
+        )
         company_cols = st.columns(3)
-        fs_company_name = company_cols[0].text_input("Corporation legal name")
-        fs_business_number = company_cols[1].text_input("Business number (optional)")
-        fs_year_end = company_cols[2].date_input("Fiscal year end", value=date.today())
+        fs_company_name = company_cols[0].text_input(
+            "Corporation legal name",
+            disabled=fs_auto_details,
+        )
+        fs_business_number = company_cols[1].text_input(
+            "Business number (optional)",
+            disabled=fs_auto_details,
+        )
+        fs_year_end = company_cols[2].date_input(
+            "Fiscal year end",
+            value=date.today(),
+            disabled=fs_auto_details,
+        )
 
         st.markdown("**Practitioner information**")
         firm_cols = st.columns(3)
@@ -1558,19 +1577,59 @@ if selected_page == "Financial statements":
         fs_submitted = st.form_submit_button("Create draft financial statements", type="primary")
 
     if fs_submitted:
-        if schedule_100_file is None or schedule_125_file is None:
-            st.error("Upload both Schedule 100 and Schedule 125 PDFs.")
-        elif not fs_company_name.strip():
-            st.error("Enter the corporation legal name.")
+        if combined_schedule_file is None and (
+            schedule_100_file is None or schedule_125_file is None
+        ):
+            st.error("Upload one combined S100/S125 PDF, or upload both schedules separately.")
         else:
             try:
                 with st.spinner("Extracting GIFI data and preparing the report package..."):
-                    schedule_100 = fs_generator.extract_schedule_pdf(schedule_100_file.getvalue(), "100")
-                    schedule_125 = fs_generator.extract_schedule_pdf(schedule_125_file.getvalue(), "125")
+                    if combined_schedule_file is not None:
+                        schedule_100, schedule_125, detected = (
+                            fs_generator.extract_combined_schedule_pdf(
+                                combined_schedule_file.getvalue()
+                            )
+                        )
+                    else:
+                        schedule_100 = fs_generator.extract_schedule_pdf(
+                            schedule_100_file.getvalue(), "100"
+                        )
+                        schedule_125 = fs_generator.extract_schedule_pdf(
+                            schedule_125_file.getvalue(), "125"
+                        )
+                        detected_100 = fs_generator.extract_statement_metadata(
+                            schedule_100_file.getvalue()
+                        )
+                        detected_125 = fs_generator.extract_statement_metadata(
+                            schedule_125_file.getvalue()
+                        )
+                        detected = {
+                            key: detected_100.get(key) or detected_125.get(key)
+                            for key in ("company_name", "business_number", "year_end")
+                        }
+
+                    company_name = (
+                        detected.get("company_name", "") if fs_auto_details else fs_company_name.strip()
+                    )
+                    business_number = (
+                        detected.get("business_number", "") if fs_auto_details else fs_business_number.strip()
+                    )
+                    year_end = (
+                        detected.get("year_end") if fs_auto_details else fs_year_end
+                    )
+                    if not company_name:
+                        raise RuntimeError(
+                            "The corporation name was not found. Turn off automatic corporation details and enter it manually."
+                        )
+                    if year_end is None:
+                        raise RuntimeError(
+                            "The fiscal year end was not found. Turn off automatic corporation details and enter it manually."
+                        )
+
                     metadata = {
-                        "company_name": fs_company_name.strip(),
-                        "business_number": fs_business_number.strip(),
-                        "year_end": fs_year_end,
+                        "company_name": company_name,
+                        "business_number": business_number,
+                        "year_end": year_end,
                         "firm_name": fs_firm_name.strip() or "Accounting practitioner",
                         "firm_address": fs_firm_address.strip(),
                         "report_date": fs_report_date,
@@ -1587,16 +1646,24 @@ if selected_page == "Financial statements":
                         "balance": schedule_100.entries,
                         "income": schedule_125.entries,
                         "warnings": schedule_100.warnings + schedule_125.warnings,
+                        "metadata": metadata,
                         "pdf": pdf_bytes,
                         "docx": docx_bytes,
-                        "pdf_name": fs_generator.suggested_filename(fs_company_name, fs_year_end, "pdf"),
-                        "docx_name": fs_generator.suggested_filename(fs_company_name, fs_year_end, "docx"),
+                        "pdf_name": fs_generator.suggested_filename(company_name, year_end, "pdf"),
+                        "docx_name": fs_generator.suggested_filename(company_name, year_end, "docx"),
                     }
             except Exception as exc:
                 st.error(str(exc))
 
     fs_result = st.session_state.get("financial_statement_result")
     if fs_result:
+        metadata = fs_result.get("metadata", {})
+        if metadata:
+            st.info(
+                f"Prepared for {metadata.get('company_name', '')} | "
+                f"Business number: {metadata.get('business_number') or 'Not found'} | "
+                f"Year end: {metadata.get('year_end')}"
+            )
         if fs_result["warnings"]:
             st.error("Review required before issuance:")
             for warning in fs_result["warnings"]:
@@ -1909,13 +1976,19 @@ if selected_page == "Guide":
     )
     st.subheader("Financial statement files")
     st.markdown(
-        "1. Export **Schedule 100** and **Schedule 125** as searchable PDFs from the T2 software.\n"
-        "2. Open **Financial statements** and upload each PDF in its labelled box.\n"
-        "3. Enter the corporation, fiscal year end, practitioner, basis of accounting and report date.\n"
+        "1. Export **Schedule 100** and **Schedule 125** from the T2 software as one combined PDF or two separate PDFs.\n"
+        "2. Open **Financial statements** and upload the combined file. Use the separate boxes only when the schedules are separate.\n"
+        "3. The corporation name, business number, and fiscal year end are read automatically. Enter the practitioner, basis of accounting, and report date.\n"
         "4. Confirm the balance and income reconciliation messages.\n"
         "5. Review and sign the editable Word draft before providing it to a client or third party."
     )
-    st.code("2025-12-31_CompanyName_S100.pdf\n2025-12-31_CompanyName_S125.pdf", language="text")
+    st.code(
+        "2025-12-31_CompanyName_S100_S125.pdf\n"
+        "or\n"
+        "2025-12-31_CompanyName_S100.pdf\n"
+        "2025-12-31_CompanyName_S125.pdf",
+        language="text",
+    )
     st.subheader("Mortgage and real estate tools")
     st.markdown(
         "1. Use **Maximum mortgage** for a GDS-based planning estimate.\n"

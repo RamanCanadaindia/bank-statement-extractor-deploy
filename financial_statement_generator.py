@@ -16,6 +16,7 @@ import pandas as pd
 # description beside the code, and that description is preferred.
 GIFI_LABELS = {
     1001: "Cash",
+    1002: "Deposits in Canadian banks and institutions: Canadian currency",
     1060: "Accounts receivable",
     1120: "Inventories",
     1180: "Short-term investments",
@@ -26,6 +27,8 @@ GIFI_LABELS = {
     1600: "Land",
     1680: "Buildings",
     1740: "Machinery and equipment",
+    1742: "Motor vehicles",
+    1743: "Accumulated amortization of motor vehicles",
     1787: "Accumulated amortization of machinery and equipment",
     2008: "Total tangible capital assets",
     2009: "Total accumulated amortization of tangible capital assets",
@@ -47,6 +50,7 @@ GIFI_LABELS = {
     3140: "Long-term debt",
     3143: "Chartered bank loan",
     3260: "Due to shareholder(s)/director(s)",
+    3261: "Due to individual shareholder(s)",
     3450: "Total long-term liabilities",
     3499: "Total liabilities",
     3500: "Common shares",
@@ -56,7 +60,11 @@ GIFI_LABELS = {
     3600: "Retained earnings (deficit)",
     3620: "Total shareholder equity",
     3640: "Total liabilities and shareholder equity",
+    3660: "Retained earnings (deficit) - start",
+    3680: "Net income (loss)",
+    3849: "Retained earnings (deficit) - end",
     8000: "Trade sales of goods and services",
+    8089: "Total sales of goods and services",
     8090: "Investment revenue",
     8140: "Rental revenue",
     8230: "Other revenue",
@@ -67,9 +75,11 @@ GIFI_LABELS = {
     8450: "Closing inventory",
     8518: "Cost of sales",
     8519: "Gross profit (loss)",
+    8520: "Advertising and promotion",
     8521: "Advertising and promotion",
     8570: "Amortization of intangible assets",
     8670: "Amortization of tangible assets",
+    8690: "Insurance",
     8710: "Interest and bank charges",
     8715: "Bank charges",
     8760: "Business taxes, licences and memberships",
@@ -80,7 +90,9 @@ GIFI_LABELS = {
     8863: "Consulting fees",
     8871: "Management and administration fees",
     8910: "Rental expense",
+    8912: "Occupancy costs",
     8960: "Repairs and maintenance",
+    8964: "Repairs and maintenance - machinery and equipment",
     9060: "Salaries and wages",
     9130: "Supplies",
     9180: "Property taxes",
@@ -98,7 +110,8 @@ GIFI_LABELS = {
 }
 
 BALANCE_TOTAL_CODES = {1599, 2008, 2009, 2178, 2179, 2599, 3139, 3450, 3499, 3620, 3640}
-INCOME_TOTAL_CODES = {8299, 8518, 8519, 9367, 9368, 9369, 9970, 9999}
+INCOME_TOTAL_CODES = {8089, 8299, 8518, 8519, 9367, 9368, 9369, 9970, 9999}
+CONTRA_ASSET_CODES = {1743, 1787, 2009, 2179}
 
 DEFAULT_COMPILATION_REPORT = """On the basis of information provided by management, we have compiled the balance sheet of {company_name} as at {year_end}, the statement of income for the year then ended, and Note 1, which describes the basis of accounting applied in preparing this financial information.
 
@@ -143,24 +156,20 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
     if schedule not in {"100", "125"}:
         raise ValueError("Schedule must be 100 or 125.")
 
-    amount_pattern = r"(?:\(?-?\$?\s*\d[\d,\s]*(?:\.\d{1,2})?\)?)"
-    patterns = [
-        re.compile(rf"^\s*(?P<code>\d{{4}})\s+(?P<desc>.*?)\s+(?P<amount>{amount_pattern})\s*$"),
-        re.compile(rf"^\s*(?P<desc>.*?)\s+(?P<code>\d{{4}})\s+(?P<amount>{amount_pattern})\s*$"),
-        re.compile(rf"^\s*(?P<desc>.*?)\s+(?P<amount>{amount_pattern})\s+(?P<code>\d{{4}})\s*$"),
-        re.compile(rf"^\s*(?P<code>\d{{4}})\s+(?P<amount>{amount_pattern})\s*$"),
-        re.compile(rf"^\s*(?P<amount>{amount_pattern})\s+(?P<code>\d{{4}})\s*$"),
-    ]
-    allowed = range(1000, 3650) if schedule == "100" else range(8000, 10000)
+    allowed = range(1000, 3900) if schedule == "100" else range(8000, 10000)
     rows: list[dict] = []
     pending_description = ""
     pending_code: int | None = None
+    pending_operator = ""
     standalone_code_pattern = re.compile(r"^\s*(?:GIFI\s*)?(?P<code>\d{4})\s*$", re.IGNORECASE)
-    standalone_amount_pattern = re.compile(
-        rf"^\s*(?P<amount>{amount_pattern})(?:\s+{amount_pattern})?\s*$"
-    )
     amount_token_pattern = re.compile(
-        r"\(?-?\$?\s*(?:\d{1,3}(?:[,\s]\d{3})+|\d+)(?:\.\d{1,2})?\)?"
+        r"(?<![\d,])\(?-?\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?\)?(?![\d,])"
+    )
+    row_pattern = re.compile(
+        r"^\s*(?P<desc>.*?)\s*(?<!\d)(?P<code>\d{4})(?!\d)\s*(?P<operator>[+=-])?\s*(?P<values>.*)$"
+    )
+    code_first_pattern = re.compile(
+        r"^\s*(?<!\d)(?P<code>\d{4})(?!\d)\s*(?P<operator>[+=-])?\s*(?P<values>.*)$"
     )
     known_labels = sorted(
         (
@@ -172,13 +181,20 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
         reverse=True,
     )
 
-    def append_row(code: int, amount_text: str, description: str = "") -> bool:
+    def append_row(
+        code: int,
+        amount_text: str,
+        description: str = "",
+        operator: str = "",
+    ) -> bool:
         if code not in allowed:
             return False
         try:
             amount = _money(amount_text)
         except ValueError:
             return False
+        if code in CONTRA_ASSET_CODES and amount > 0:
+            amount = -amount
         rows.append(
             {
                 "Code": code,
@@ -192,15 +208,55 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
         line = re.sub(r"\s+", " ", raw_line).strip()
         if not line:
             continue
-        match = next((pattern.match(line) for pattern in patterns if pattern.match(line)), None)
+
+        match = code_first_pattern.match(line) or row_pattern.match(line)
         if match:
             code = int(match.group("code"))
-            if append_row(code, match.group("amount"), match.groupdict().get("desc", "")):
-                pending_description = ""
-                pending_code = None
-            continue
+            if code in allowed:
+                values = match.group("values") or ""
+                description = match.groupdict().get("desc", "") or pending_description
+                operator = match.group("operator") or ""
+                is_plausible_gifi_row = (
+                    bool(operator)
+                    or code in GIFI_LABELS
+                    or match.re is code_first_pattern
+                )
+                if (
+                    not is_plausible_gifi_row
+                    or values.lstrip().startswith(("/", "."))
+                    or description.lower().startswith("version")
+                ):
+                    continue
+                amounts = amount_token_pattern.findall(values)
+                if amounts and append_row(
+                    code,
+                    amounts[0],
+                    description,
+                    operator,
+                ):
+                    pending_description = ""
+                    pending_code = None
+                    pending_operator = ""
+                else:
+                    pending_code = code
+                    pending_operator = operator
+                    if description:
+                        pending_description = description
+                continue
 
         normalized_line = re.sub(r"[^a-z0-9]+", " ", line.lower()).strip()
+        if schedule == "100" and re.search(
+            r"\btotal liabilities and shareholder s? equity\b",
+            normalized_line,
+        ):
+            amount_candidates = amount_token_pattern.findall(line)
+            if amount_candidates:
+                append_row(3640, amount_candidates[0], GIFI_LABELS[3640])
+            pending_description = ""
+            pending_code = None
+            pending_operator = ""
+            continue
+
         label_match = next(
             (
                 (code, label)
@@ -212,11 +268,10 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
         if label_match:
             code, label = label_match
             amount_candidates = amount_token_pattern.findall(line)
-            # Labels do not contain numbers. If OCR also captured a GIFI code,
-            # the right-most numeric token remains the statement amount.
-            if amount_candidates and append_row(code, amount_candidates[-1], label):
+            if amount_candidates and append_row(code, amount_candidates[0], label):
                 pending_description = ""
                 pending_code = None
+                pending_operator = ""
             else:
                 pending_description = label
                 pending_code = code
@@ -229,14 +284,20 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
                 pending_code = code
             continue
 
-        amount_match = standalone_amount_pattern.match(line)
-        if pending_code is not None and amount_match:
-            if append_row(pending_code, amount_match.group("amount")):
+        amount_matches = amount_token_pattern.findall(line)
+        if pending_code is not None and amount_matches:
+            if append_row(
+                pending_code,
+                amount_matches[0],
+                pending_description,
+                pending_operator,
+            ):
                 pending_description = ""
                 pending_code = None
+                pending_operator = ""
             continue
 
-        if not re.search(r"\d{4}", line) and not re.fullmatch(amount_pattern, line):
+        if not re.search(r"\d{4}", line) and not amount_matches:
             # Positioned tax forms often extract the label, code and amount as
             # separate lines. Keep the latest text label until a row is complete.
             pending_description = line[:160]
@@ -251,8 +312,146 @@ def parse_schedule_text(text: str, schedule: str) -> ScheduleResult:
     # If the same code appears more than once, retain the last occurrence. This
     # normally represents the final/summary statement in a tax-software PDF.
     entries = entries.drop_duplicates(subset=["Code"], keep="last").sort_values("Code").reset_index(drop=True)
+    entries = _derive_supported_totals(entries, schedule)
     warnings = validate_schedule(entries, schedule)
     return ScheduleResult(schedule=schedule, entries=entries, warnings=warnings, source_text=text)
+
+
+def _derive_supported_totals(entries: pd.DataFrame, schedule: str) -> pd.DataFrame:
+    """Add totals that can be calculated unambiguously from extracted GIFI rows."""
+    result = entries.copy()
+
+    def add(code: int, amount: float) -> None:
+        nonlocal result
+        if code not in result["Code"].tolist():
+            result = pd.concat(
+                [
+                    result,
+                    pd.DataFrame(
+                        [{"Code": code, "Description": GIFI_LABELS[code], "Amount": amount}]
+                    ),
+                ],
+                ignore_index=True,
+            )
+
+    if schedule == "100":
+        current_total = _value(result, 3139)
+        long_term_rows = result[
+            (result["Code"] >= 3140)
+            & (result["Code"] < 3500)
+            & ~result["Code"].isin(BALANCE_TOTAL_CODES)
+        ]
+        if _value(result, 3499) is None and current_total is not None:
+            add(3499, current_total + float(long_term_rows["Amount"].sum()))
+        if _value(result, 3640) is None:
+            assets = _value(result, 2599)
+            liabilities = _value(result, 3499)
+            equity = _value(result, 3620)
+            if assets is not None:
+                add(3640, assets)
+            elif liabilities is not None and equity is not None:
+                add(3640, liabilities + equity)
+    else:
+        revenue = _value(result, 8299)
+        cost_of_sales = _value(result, 8518)
+        income_before_tax = _value(result, 9970)
+        if _value(result, 8519) is None and revenue is not None and cost_of_sales is not None:
+            add(8519, revenue - cost_of_sales)
+        if _value(result, 9368) is None and revenue is not None and income_before_tax is not None:
+            add(9368, revenue - income_before_tax)
+
+    return result.sort_values("Code").reset_index(drop=True)
+
+
+def extract_statement_metadata(pdf_bytes: bytes) -> dict:
+    """Read corporation details printed on common T2 GIFI schedule packages."""
+    text = extract_pdf_text(pdf_bytes)
+    compact = re.sub(r"[ \t]+", " ", text)
+
+    year_match = re.search(
+        r"(?:Tax\s+year\s+end|Year\s+End)\s*:?\s*(\d{4}[/-]\d{2}[/-]\d{2})",
+        compact,
+        flags=re.IGNORECASE,
+    )
+    if not year_match:
+        year_match = re.search(r"\b(20\d{2}[/-]\d{2}[/-]\d{2})\b", compact)
+
+    company_match = re.search(
+        r"Name\s+of\s+corporation\s*:\s*(.+?)(?=\s+20\d{2}[/-]\d{2}[/-]\d{2}|\n)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not company_match:
+        company_match = re.search(
+            r"^\s*(.+?)\s+Year\s+End\s*:",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+
+    business_matches = re.findall(
+        r"\b\d{9}(?:RC\d{4})?\b",
+        compact,
+        flags=re.IGNORECASE,
+    )
+    business_number = next(
+        (value.upper() for value in business_matches if re.search(r"RC\d{4}$", value, re.I)),
+        business_matches[0] if business_matches else "",
+    )
+
+    year_end = None
+    if year_match:
+        try:
+            year_end = date.fromisoformat(year_match.group(1).replace("/", "-"))
+        except ValueError:
+            year_end = None
+
+    return {
+        "company_name": re.sub(r"\s+", " ", company_match.group(1)).strip() if company_match else "",
+        "business_number": business_number,
+        "year_end": year_end,
+    }
+
+
+def extract_combined_schedule_pdf(
+    pdf_bytes: bytes,
+) -> tuple[ScheduleResult, ScheduleResult, dict]:
+    """Extract S100, S125, and corporation details from one combined T2 PDF."""
+    schedule_100_bytes, schedule_125_bytes = _split_combined_schedule_pages(pdf_bytes)
+    return (
+        extract_schedule_pdf(schedule_100_bytes, "100"),
+        extract_schedule_pdf(schedule_125_bytes, "125"),
+        extract_statement_metadata(pdf_bytes),
+    )
+
+
+def _split_combined_schedule_pages(pdf_bytes: bytes) -> tuple[bytes, bytes]:
+    """Separate balance-sheet and income-statement pages in a combined package."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        balance_writer = PdfWriter()
+        income_writer = PdfWriter()
+        for page in reader.pages:
+            page_text = (page.extract_text() or "").lower()
+            if "condensed balance sheet information" in page_text:
+                balance_writer.add_page(page)
+            if (
+                "condensed income statement information" in page_text
+                or "extraordinary items and income taxes" in page_text
+            ):
+                income_writer.add_page(page)
+
+        def writer_bytes(writer: PdfWriter) -> bytes:
+            output = io.BytesIO()
+            writer.write(output)
+            return output.getvalue()
+
+        if len(balance_writer.pages) and len(income_writer.pages):
+            return writer_bytes(balance_writer), writer_bytes(income_writer)
+    except Exception:
+        pass
+    return pdf_bytes, pdf_bytes
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
@@ -574,7 +773,10 @@ def build_financial_statement_pdf(balance: pd.DataFrame, income: pd.DataFrame, m
             )
         return result
 
-    def financial_table(sections: Iterable[tuple[str, pd.DataFrame, tuple[str, float] | None]]) -> Table:
+    def financial_table(
+        sections: Iterable[tuple[str, pd.DataFrame, tuple[str, float] | None]],
+        compact: bool = False,
+    ) -> Table:
         rows: list[list] = [["", year_end]]
         bold_rows = {0}
         for heading, frame, total in sections:
@@ -585,7 +787,8 @@ def build_financial_statement_pdf(balance: pd.DataFrame, income: pd.DataFrame, m
             if total:
                 rows.append([total[0], _format_amount(float(total[1]))])
                 bold_rows.add(len(rows) - 1)
-                rows.append(["", ""])
+                if not compact:
+                    rows.append(["", ""])
         display_rows = []
         for row_index, row in enumerate(rows):
             label = escape(str(row[0]))
@@ -597,8 +800,8 @@ def build_financial_statement_pdf(balance: pd.DataFrame, income: pd.DataFrame, m
             ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
             ("FONTSIZE", (0, 0), (-1, -1), 9),
             ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3 if compact else 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3 if compact else 4),
             ("LINEBELOW", (1, 0), (1, 0), 0.75, colors.black),
         ]
         for row_index in bold_rows:
@@ -662,7 +865,7 @@ def build_financial_statement_pdf(balance: pd.DataFrame, income: pd.DataFrame, m
     if not tables["taxes"].empty:
         income_sections.append(("INCOME TAXES AND OTHER ITEMS", tables["taxes"], None))
     income_sections.append(("", pd.DataFrame(columns=income.columns), ("Net income (loss)", _value(income, 9999) if _value(income, 9999) is not None else (_value(income, 9970) or 0))))
-    story.append(financial_table(income_sections))
+    story.append(financial_table(income_sections, compact=True))
     story.append(PageBreak())
 
     story.extend(page_header("Notes to Compiled Financial Information", f"For the year ended {year_end}"))
