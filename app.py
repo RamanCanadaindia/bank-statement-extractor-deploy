@@ -22,6 +22,7 @@ sys.path.insert(0, str(APP_DIR))
 
 import bmo_docling_to_excel as extractor
 import financial_statement_generator as fs_generator
+import google_sheets_sender as sheets_sender
 import mortgage_calculator as mortgage
 import transaction_categorizer as categorizer
 from real_estate_research_agent import (
@@ -36,6 +37,7 @@ from real_estate_research_agent import (
 
 importlib.reload(extractor)
 importlib.reload(fs_generator)
+importlib.reload(sheets_sender)
 importlib.reload(mortgage)
 
 
@@ -1349,7 +1351,17 @@ def go_to_page(page: str) -> None:
 
 
 def sign_out() -> None:
-    st.session_state.pop("authenticated", None)
+    for key in [
+        "authenticated",
+        "extraction_results",
+        "extraction_failures",
+        "categorization_result",
+        "sheets-endpoint",
+        "sheets-spreadsheet",
+        "sheets-tab",
+        "sheets-secret",
+    ]:
+        st.session_state.pop(key, None)
     st.query_params["view"] = "home"
 
 
@@ -1490,55 +1502,156 @@ if selected_page == "Extract statements":
                     failures.append({"file": uploaded_file.name, "error": str(exc)})
                 progress.progress(index / len(uploaded_files), text=f"Processed {index} of {len(uploaded_files)}")
             progress.empty()
+            st.session_state["extraction_results"] = successes
+            st.session_state["extraction_failures"] = failures
 
-            if successes:
-                st.success(f"Created {len(successes)} Excel file(s).")
-                if len(successes) > 1:
-                    annual_data, annual_transactions, annual_summary, annual_filename = merge_extracted_results(
-                        successes,
-                        "Annual_transactions.xlsx",
-                    )
-                    st.download_button(
-                        "Download one annual workbook",
-                        data=annual_data,
-                        file_name=annual_filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                    )
-                    with st.expander("Preview annual summary"):
-                        st.dataframe(annual_summary, use_container_width=True, hide_index=True)
-                    st.download_button(
-                        "Download monthly Excel files as ZIP",
-                        data=make_zip(successes),
-                        file_name="bank_statement_excels.zip",
-                        mime="application/zip",
-                    )
+    successes = st.session_state.get("extraction_results", [])
+    failures = st.session_state.get("extraction_failures", [])
+    if successes:
+        st.success(f"Created {len(successes)} Excel file(s).")
 
-                for result in successes:
-                    with st.expander(f"{result['source']} - {result['bank']}", expanded=len(successes) == 1):
-                        metrics = result["metrics"]
-                        cols = st.columns(4)
-                        cols[0].metric("Transactions", int(metrics.get("Number of transactions", 0)))
-                        cols[1].metric("Debits", f"${metrics.get('Total Debits', 0):,.2f}")
-                        cols[2].metric("Credits", f"${metrics.get('Total Credits', 0):,.2f}")
-                        cols[3].metric("Closing balance", f"${metrics.get('Closing Balance', 0):,.2f}")
-                        reconciliation = result["reconciliation"]
-                        if reconciliation["status"] == "reconciled":
-                            st.success(reconciliation["message"])
-                        else:
-                            st.warning(reconciliation["message"])
-                        st.download_button(
-                            "Download Excel",
-                            data=result["output_bytes"],
-                            file_name=result["output_name"],
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=f"download-{result['output_name']}",
-                        )
-                        st.dataframe(result["transactions"], use_container_width=True, hide_index=True)
+        with st.expander("Send to Google Sheets", expanded=False):
+            st.caption(
+                "Send the extracted transaction rows directly to a private Google Sheet. "
+                "Repeated uploads of the same statement are blocked by the connector."
+            )
+            connection_cols = st.columns(2)
+            endpoint_url = connection_cols[0].text_input(
+                "Apps Script Web App URL",
+                value=os.getenv("GOOGLE_SHEETS_WEB_APP_URL", ""),
+                placeholder="https://script.google.com/macros/s/.../exec",
+                key="sheets-endpoint",
+            )
+            spreadsheet_target = connection_cols[1].text_input(
+                "Google Sheet URL or spreadsheet ID",
+                key="sheets-spreadsheet",
+            )
+            destination_cols = st.columns(2)
+            destination_tab = destination_cols[0].text_input(
+                "Destination tab",
+                value="Bank Transactions",
+                key="sheets-tab",
+            )
+            connector_secret = destination_cols[1].text_input(
+                "Connector secret",
+                value=os.getenv("GOOGLE_SHEETS_SHARED_SECRET", ""),
+                type="password",
+                key="sheets-secret",
+            )
+            setup_cols = st.columns([1, 1])
+            setup_cols[0].download_button(
+                "Download Apps Script connector",
+                data=(APP_DIR / "google_sheets_connector.gs").read_bytes(),
+                file_name="google_sheets_connector.gs",
+                mime="text/plain",
+                use_container_width=True,
+            )
+            send_clicked = setup_cols[1].button(
+                "Send all to Google Sheets",
+                type="primary",
+                use_container_width=True,
+            )
+            with st.expander("Connector setup steps"):
+                st.markdown(
+                    "1. Create an Apps Script project at **script.google.com**.\n"
+                    "2. Paste the downloaded connector code into `Code.gs`.\n"
+                    "3. In **Project Settings → Script properties**, add `RFS_SHARED_SECRET` "
+                    "and enter a long private value.\n"
+                    "4. Select **Deploy → New deployment → Web app**. Execute it as yourself "
+                    "and permit access required for the Streamlit server.\n"
+                    "5. Paste the deployment URL ending in `/exec` and the same secret above."
+                )
+            st.caption(
+                "The destination spreadsheet remains in its owner's Google Drive. "
+                "The connector secret is used only for this browser session."
+            )
 
-            if failures:
-                st.error(f"{len(failures)} file(s) need review.")
-                st.dataframe(pd.DataFrame(failures), use_container_width=True, hide_index=True)
+            if send_clicked:
+                upload_results = []
+                with st.spinner("Sending transactions to Google Sheets..."):
+                    for result in successes:
+                        try:
+                            response = sheets_sender.send_transactions(
+                                endpoint_url=endpoint_url,
+                                shared_secret=connector_secret,
+                                spreadsheet=spreadsheet_target,
+                                sheet_name=destination_tab,
+                                frame=result["transactions"],
+                                source_file=result["source"],
+                                bank=result["bank"],
+                            )
+                            upload_results.append(
+                                {
+                                    "File": result["source"],
+                                    "Status": (
+                                        "Already uploaded"
+                                        if response.get("duplicate")
+                                        else "Sent"
+                                    ),
+                                    "Rows": int(response.get("rows_added", 0)),
+                                }
+                            )
+                        except Exception as exc:
+                            upload_results.append(
+                                {
+                                    "File": result["source"],
+                                    "Status": "Error",
+                                    "Rows": 0,
+                                    "Message": str(exc),
+                                }
+                            )
+                if all(item["Status"] != "Error" for item in upload_results):
+                    st.success("Google Sheets upload completed.")
+                else:
+                    st.error("Some statements could not be sent.")
+                st.dataframe(pd.DataFrame(upload_results), use_container_width=True, hide_index=True)
+
+        if len(successes) > 1:
+            annual_data, annual_transactions, annual_summary, annual_filename = merge_extracted_results(
+                successes,
+                "Annual_transactions.xlsx",
+            )
+            st.download_button(
+                "Download one annual workbook",
+                data=annual_data,
+                file_name=annual_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+            )
+            with st.expander("Preview annual summary"):
+                st.dataframe(annual_summary, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download monthly Excel files as ZIP",
+                data=make_zip(successes),
+                file_name="bank_statement_excels.zip",
+                mime="application/zip",
+            )
+
+        for result in successes:
+            with st.expander(f"{result['source']} - {result['bank']}", expanded=len(successes) == 1):
+                metrics = result["metrics"]
+                cols = st.columns(4)
+                cols[0].metric("Transactions", int(metrics.get("Number of transactions", 0)))
+                cols[1].metric("Debits", f"${metrics.get('Total Debits', 0):,.2f}")
+                cols[2].metric("Credits", f"${metrics.get('Total Credits', 0):,.2f}")
+                cols[3].metric("Closing balance", f"${metrics.get('Closing Balance', 0):,.2f}")
+                reconciliation = result["reconciliation"]
+                if reconciliation["status"] == "reconciled":
+                    st.success(reconciliation["message"])
+                else:
+                    st.warning(reconciliation["message"])
+                st.download_button(
+                    "Download Excel",
+                    data=result["output_bytes"],
+                    file_name=result["output_name"],
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"download-{result['output_name']}",
+                )
+                st.dataframe(result["transactions"], use_container_width=True, hide_index=True)
+
+    if failures:
+        st.error(f"{len(failures)} file(s) need review.")
+        st.dataframe(pd.DataFrame(failures), use_container_width=True, hide_index=True)
 
 if selected_page == "Build annual file":
     st.subheader("Combine monthly Excel files")
@@ -2364,6 +2477,14 @@ if selected_page == "Guide":
         "3. Optionally upload a custom rule CSV for recurring merchants or customers.\n"
         "4. Review all rows marked **Low** or **Review** and change the Category directly in the table.\n"
         "5. Download the categorized workbook with its Category Summary and Built-in Rules sheets."
+    )
+    st.subheader("Send to Google Sheets")
+    st.markdown(
+        "1. Extract and review the statement transactions.\n"
+        "2. Open **Send to Google Sheets** and download the Apps Script connector.\n"
+        "3. Deploy the connector from your own Google account and create its private secret.\n"
+        "4. Enter the connector URL, destination spreadsheet, tab name and secret.\n"
+        "5. Select **Send all to Google Sheets**. Repeating the same upload will not duplicate it."
     )
     st.subheader("Financial statement files")
     st.markdown(

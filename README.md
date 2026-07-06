@@ -43,6 +43,21 @@ The visible Transactions sheet contains Date, Description, Amount, Category and 
 
 For credit cards, payments/refunds are positive and purchases/fees/interest are negative. The calculated outstanding balance uses the credit-card balance direction.
 
+## Google Sheets connection
+
+Completed extraction results can be sent directly to a private Google Sheet:
+
+1. Download `google_sheets_connector.gs` from the website.
+2. Create an Apps Script project and paste the connector into `Code.gs`.
+3. Add the Script Property `RFS_SHARED_SECRET` with a long private value.
+4. Deploy the project as a Web App that executes as the sheet owner.
+5. In the website, enter the Web App `/exec` URL, Google Sheet URL, destination
+   tab and the same private secret.
+
+The connector appends transactions in one batch and maintains a hidden
+`_RFS Upload Log` tab. Its batch identifier prevents the same statement from
+being appended twice. Formula-like text is escaped before it is written.
+
 ## Compiled financial statements
 
 The Financial statements page accepts searchable T2 Schedule 100 and Schedule
