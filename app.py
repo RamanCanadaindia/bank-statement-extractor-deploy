@@ -1878,6 +1878,14 @@ if selected_page == "Auto categorize":
 if selected_page == "Payroll template":
     st.subheader("Payroll calculator")
     st.caption("Enter one pay period, then download a payslip PDF and updated payroll register.")
+    payroll_pdoc_script = APP_DIR / "payroll_pdoc_google_sheets.gs"
+    if payroll_pdoc_script.exists():
+        st.download_button(
+            "Download Google Sheets CRA PDOC helper",
+            data=payroll_pdoc_script.read_text(encoding="utf-8"),
+            file_name="payroll_pdoc_google_sheets.gs",
+            mime="text/plain",
+        )
 
     register_file = st.file_uploader(
         "Upload existing payroll register Excel",

@@ -58,6 +58,26 @@ The connector appends transactions in one batch and maintains a hidden
 `_RFS Upload Log` tab. Its batch identifier prevents the same statement from
 being appended twice. Formula-like text is escaped before it is written.
 
+## Payroll CRA PDOC helper for Google Sheets
+
+The Payroll page includes a download for `payroll_pdoc_google_sheets.gs`.
+Paste that file into a Google Sheets Apps Script project attached to your
+payroll workbook.
+
+In Google Sheets:
+
+1. Open **Extensions > Apps Script**.
+2. Paste `payroll_pdoc_google_sheets.gs` into `Code.gs`.
+3. Save and reload the spreadsheet.
+4. Use **Payroll PDOC > Setup PDOC sheets**.
+5. Use **Payroll PDOC > Paste PDOC result text**.
+6. Copy text from the CRA PDOC result PDF, paste it into the dialog, and import.
+7. Select the imported PDOC row and use **Apply selected PDOC row to Payroll**.
+
+The helper updates the matching row in the `Payroll` tab by `employee_id` and
+`pay_date`. It writes the CRA PDOC CPP, CPP2, EI, federal tax, provincial tax,
+total deductions, and net pay into the payroll row.
+
 ## Compiled financial statements
 
 The Financial statements page accepts searchable T2 Schedule 100 and Schedule
