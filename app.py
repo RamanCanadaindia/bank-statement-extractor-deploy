@@ -6,6 +6,7 @@ import hmac
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -833,6 +834,70 @@ def calculate_payroll(values: dict) -> dict:
         "employer_cpp": cpp,
         "employer_ei": round(ei * 1.4, 2),
     }
+
+
+def _pdoc_amount(text: str, label: str) -> float | None:
+    pattern = rf"{re.escape(label)}\s+(-?\d[\d,]*\.\d{{2}})"
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return float(match.group(1).replace(",", ""))
+
+
+def extract_pdoc_result(uploaded_file) -> dict:
+    if uploaded_file is None:
+        return {}
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise RuntimeError("CRA PDOC PDF import requires pypdf. Install requirements and restart the app.") from exc
+
+    try:
+        reader = PdfReader(io.BytesIO(uploaded_file.getvalue()))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception as exc:
+        raise RuntimeError(f"Could not read CRA PDOC PDF: {exc}") from exc
+
+    if "Payroll Deductions Online Calculator" not in text:
+        raise RuntimeError("This does not look like a CRA PDOC result PDF.")
+
+    values = {
+        "gross": _pdoc_amount(text, "Salary or wages income"),
+        "tax_fed": _pdoc_amount(text, "Federal tax deduction"),
+        "tax_prov": _pdoc_amount(text, "Provincial tax deduction"),
+        "cpp": _pdoc_amount(text, "CPP deductions"),
+        "ei": _pdoc_amount(text, "EI deductions"),
+        "total_deductions": _pdoc_amount(text, "Total deductions"),
+        "net": _pdoc_amount(text, "Net amount"),
+    }
+    missing = [name for name, amount in values.items() if amount is None and name != "gross"]
+    if missing:
+        raise RuntimeError("Could not find all CRA PDOC deduction amounts in this PDF.")
+
+    date_match = re.search(r"Date the employee is paid:\s+(\d{4}-\d{2}-\d{2})", text)
+    frequency_match = re.search(r"Pay period frequency:\s+([^\n(]+)", text)
+    values["pay_date"] = date_match.group(1) if date_match else ""
+    values["frequency"] = frequency_match.group(1).strip() if frequency_match else ""
+    return values
+
+
+def apply_pdoc_to_calc(calc: dict, pdoc: dict, values: dict) -> dict:
+    updated = dict(calc)
+    for field in ["cpp", "ei", "tax_fed", "tax_prov", "total_deductions", "net"]:
+        if pdoc.get(field) is not None:
+            updated[field] = round(float(pdoc[field]), 2)
+    updated["employer_cpp"] = updated["cpp"]
+    updated["employer_ei"] = round(updated["ei"] * 1.4, 2)
+    updated["pdoc_source"] = "CRA PDOC PDF"
+    if pdoc.get("gross") is not None and abs(float(pdoc["gross"]) - calc["gross"]) > 0.01:
+        updated["pdoc_warning"] = (
+            f"PDOC gross pay is ${float(pdoc['gross']):,.2f}, but the payroll form gross pay is ${calc['gross']:,.2f}."
+        )
+    elif pdoc.get("frequency") and values.get("frequency") and pdoc["frequency"].lower() != values["frequency"].lower():
+        updated["pdoc_warning"] = f"PDOC frequency is {pdoc['frequency']}, but the form frequency is {values['frequency']}."
+    else:
+        updated["pdoc_warning"] = ""
+    return updated
 
 
 def load_payroll_register(uploaded_file) -> pd.DataFrame:
@@ -1871,6 +1936,14 @@ if selected_page == "Payroll template":
 
         st.markdown("**Manual adjustment**")
         other_deductions = st.number_input("Other deductions", min_value=0.0, value=0.0, step=10.0)
+
+        st.markdown("**CRA PDOC result**")
+        pdoc_file = st.file_uploader(
+            "Upload CRA PDOC PDF to use official deductions",
+            type=["pdf"],
+            key="payroll-pdoc-pdf",
+            help="Optional. Download the result PDF from CRA PDOC and upload it here so the payslip uses CRA's CPP, EI, tax, and net pay.",
+        )
         submitted = st.form_submit_button("Calculate payroll", type="primary")
 
     if submitted:
@@ -1898,6 +1971,14 @@ if selected_page == "Payroll template":
         payroll_input["ytd_cpp2"] = ytd_cpp2
         payroll_input["ytd_ei"] = ytd_before["ei"] + ytd_ei
         calc = calculate_payroll(payroll_input)
+        pdoc_result = {}
+        try:
+            if pdoc_file is not None:
+                pdoc_result = extract_pdoc_result(pdoc_file)
+                calc = apply_pdoc_to_calc(calc, pdoc_result, payroll_input)
+        except Exception as exc:
+            st.error(str(exc))
+            st.stop()
         register_row = make_payroll_register_row(payroll_input, calc, ytd_before)
         updated_register = pd.concat(
             [payroll_register, pd.DataFrame([register_row], columns=PAYROLL_COLUMNS)],
@@ -1913,6 +1994,7 @@ if selected_page == "Payroll template":
                 "pay_date": pay_date,
             },
             "calc": calc,
+            "pdoc_result": pdoc_result,
             "updated_register": updated_register,
         }
 
@@ -1945,6 +2027,10 @@ if selected_page == "Payroll template":
             ]
         )
         st.dataframe(result_df, use_container_width=True, hide_index=True)
+        if calc.get("pdoc_source"):
+            st.success("CRA PDOC PDF applied. Payslip and payroll register are using the official PDOC deduction amounts.")
+            if calc.get("pdoc_warning"):
+                st.warning(calc["pdoc_warning"])
 
         pdf_payroll = {
             **saved["payroll"],
@@ -1990,7 +2076,10 @@ if selected_page == "Payroll template":
         )
         with st.expander("Preview payroll register row"):
             st.dataframe(saved["updated_register"].tail(1), use_container_width=True, hide_index=True)
-        st.warning("Payroll calculations should be reviewed against CRA PDOC before remitting or filing.")
+        if calc.get("pdoc_source"):
+            st.info("Keep the CRA PDOC PDF with the payroll file as calculation support.")
+        else:
+            st.warning("Payroll calculations are estimates. Upload a CRA PDOC result PDF to make the payslip match PDOC.")
 
 if selected_page == "Financial statements":
     st.subheader("Compiled financial statements")
