@@ -49,7 +49,7 @@ class FinancialStatementGeneratorTests(unittest.TestCase):
             "company_name": "Example Transport Ltd.",
             "business_number": "123456789RC0001",
             "year_end": date(2025, 12, 31),
-            "firm_name": "Raman Financial Services",
+            "firm_name": "Raman Tax & Accounting Inc",
             "firm_address": "Surrey, British Columbia",
             "report_date": date(2026, 3, 15),
             "basis_of_accounting": "Accrual basis selected by management.",

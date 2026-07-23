@@ -1,4 +1,4 @@
-# Raman Financial Services Accounting Tools
+# Raman Tax & Accounting Inc — Accounting Tools
 
 A Streamlit website for bank-statement extraction, annual transaction workbooks,
 payroll records, and draft compiled financial statements.

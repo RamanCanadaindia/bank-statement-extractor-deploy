@@ -43,7 +43,7 @@ importlib.reload(mortgage)
 
 
 st.set_page_config(
-    page_title="Raman Financial Services - Accounting Tools",
+    page_title="Raman Tax & Accounting Inc - Accounting Tools",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -353,10 +353,10 @@ def render_public_home() -> None:
     st.markdown(
         '<nav class="public-nav">'
         '<div class="rfs-topbrand"><span class="rfs-logo">R</span>'
-        "<span>Raman Financial Services</span></div>"
+        "<span>Raman Tax &amp; Accounting Inc</span></div>"
         '<div class="public-nav-links">'
         '<a href="?view=home">Home</a>'
-        '<a href="#public-tools">Tools</a>'
+        '<a href="?view=tools">Tools</a>'
         '<a href="#public-workflow">Workflow</a>'
         '<a class="public-login" href="?view=workspace">Open secure tools</a>'
         "</div></nav>",
@@ -365,37 +365,32 @@ def render_public_home() -> None:
     st.markdown(
         f'<section class="public-hero" style="background-image:url(data:image/png;base64,{hero_data})">'
         '<div class="public-hero-copy">'
-        '<span class="rfs-kicker">Accounting and financial tools</span>'
-        "<h1>Financial work, organized.</h1>"
-        "<p>Prepare bank transactions, automatic bookkeeping categories, annual workbooks, payroll records, compiled financial "
-        "statements, mortgage estimates, and real estate investment analysis in one workspace.</p>"
+        '<span class="rfs-kicker">Local tax and accounting support</span>'
+        "<h1>Clear numbers. Confident decisions.</h1>"
+        "<p>Personal, business, and corporate tax support—explained in plain language and handled with care, right here in Surrey.</p>"
         '<div class="public-actions">'
-        '<a href="?view=workspace">Open secure tools</a>'
-        '<a href="#public-tools">Explore tools</a>'
+        '<a href="?view=workspace">Open secure workspace</a>'
+        '<a href="?view=tools">View client tools</a>'
         "</div></div></section>",
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        '<section class="public-section" id="public-tools">'
-        '<div class="public-section-head"><span class="rfs-kicker">Tools</span>'
-        "<h2>One workspace for recurring financial work</h2>"
-        "<p>Move from source documents to reviewable working files without changing systems.</p>"
+        '<section class="public-section">'
+        '<div class="public-section-head"><span class="rfs-kicker">Services</span>'
+        "<h2>Accounting support that fits real life</h2>"
+        "<p>Whether it is one return or year-round support, we keep the process organized, understandable, and focused on what matters to you.</p>"
         "</div></section>",
         unsafe_allow_html=True,
     )
-    public_tools = [
-        ("01", "Statement extraction", "Convert supported bank and credit-card statements into organized transactions."),
-        ("02", "Auto categorization", "Apply reviewable bookkeeping categories using merchant and transaction-direction rules."),
-        ("03", "Annual workbooks", "Combine verified monthly files while preserving statement order and separation."),
-        ("04", "Payroll records", "Calculate payroll, update annual registers, and prepare employee payslips."),
-        ("05", "Financial statements", "Create reviewable draft statements from Schedule 100 and Schedule 125 PDFs."),
-        ("06", "Mortgage planning", "Estimate mortgage capacity using the Gross Debt Service calculation."),
-        ("07", "Investment analysis", "Compare property costs, cash flow, rents, and supporting market inputs."),
+    public_services = [
+        ("01", "Personal tax returns", "Straightforward filing for individuals and families, with careful attention to eligible credits and deductions."),
+        ("02", "Business and corporate tax", "Year-end tax preparation and practical support that helps owners stay compliant and plan confidently."),
+        ("03", "Bookkeeping and payroll", "Reliable records, reconciliations, payroll, and GST/HST support throughout the year."),
     ]
-    for row_start in range(0, len(public_tools), 3):
+    for row_start in range(0, len(public_services), 3):
         columns = st.columns(3)
-        for column, (number, title, copy) in zip(columns, public_tools[row_start : row_start + 3]):
+        for column, (number, title, copy) in zip(columns, public_services[row_start : row_start + 3]):
             with column:
                 st.markdown(
                     f'<article class="public-card"><span class="public-card-number">{number}</span>'
@@ -431,8 +426,57 @@ def render_public_home() -> None:
         "mortgage calculations, and investment tools remain behind the workspace password.</p>"
         '<div class="public-actions" style="margin-top:1rem">'
         '<a href="?view=workspace">Sign in to the workspace</a></div></section>'
-        '<footer class="public-footer"><strong>Raman Financial Services</strong>'
-        "<span>Financial tools for organized, reviewable work.</span></footer>",
+        '<footer class="public-footer"><strong>Raman Tax &amp; Accounting Inc</strong>'
+        "<span>Tax and accounting support for Surrey and the Lower Mainland.</span></footer>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_public_tools() -> None:
+    st.markdown(
+        '<nav class="public-nav">'
+        '<div class="rfs-topbrand"><span class="rfs-logo">R</span>'
+        "<span>Raman Tax &amp; Accounting Inc</span></div>"
+        '<div class="public-nav-links">'
+        '<a href="?view=home">Home</a>'
+        '<a href="?view=tools">Tools</a>'
+        '<a class="public-login" href="?view=workspace">Open secure tools</a>'
+        "</div></nav>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<section class="public-section" id="public-tools">'
+        '<div class="public-section-head"><span class="rfs-kicker">Client tools</span>'
+        "<h1>Financial tools in one secure workspace</h1>"
+        "<p>Prepare source documents, review generated records, and export practical working files.</p>"
+        "</div></section>",
+        unsafe_allow_html=True,
+    )
+    public_tools = [
+        ("01", "Statement extraction", "Convert supported bank and credit-card statements into organized transactions."),
+        ("02", "Auto categorization", "Apply reviewable bookkeeping categories using merchant and transaction-direction rules."),
+        ("03", "Annual workbooks", "Combine verified monthly files while preserving statement order and separation."),
+        ("04", "Payroll records", "Calculate payroll, update annual registers, and prepare employee payslips."),
+        ("05", "Financial statements", "Create reviewable draft statements from Schedule 100 and Schedule 125 PDFs."),
+        ("06", "Mortgage planning", "Estimate mortgage capacity using the Gross Debt Service calculation."),
+        ("07", "Investment analysis", "Compare property costs, cash flow, rents, and supporting market inputs."),
+    ]
+    for row_start in range(0, len(public_tools), 3):
+        columns = st.columns(3)
+        for column, (number, title, copy) in zip(columns, public_tools[row_start : row_start + 3]):
+            with column:
+                st.markdown(
+                    f'<article class="public-card"><span class="public-card-number">{number}</span>'
+                    f"<h3>{title}</h3><p>{copy}</p></article>",
+                    unsafe_allow_html=True,
+                )
+    st.markdown(
+        '<section class="public-band"><h2>Ready to work with your records?</h2>'
+        "<p>The financial workspace is password protected. Sign in to open the tools and process files.</p>"
+        '<div class="public-actions" style="margin-top:1rem">'
+        '<a href="?view=workspace">Open secure workspace</a></div></section>'
+        '<footer class="public-footer"><strong>Raman Tax &amp; Accounting Inc</strong>'
+        "<span>Secure, reviewable financial workflows.</span></footer>",
         unsafe_allow_html=True,
     )
 
@@ -450,7 +494,7 @@ def require_password() -> None:
 
     st.markdown(
         '<div class="rfs-topbar"><div class="rfs-topbrand">'
-        '<span class="rfs-logo">R</span><span>Raman Financial Services</span></div>'
+        '<span class="rfs-logo">R</span><span>Raman Tax &amp; Accounting Inc</span></div>'
         '<span class="rfs-status">Secure workspace</span></div>',
         unsafe_allow_html=True,
     )
@@ -482,6 +526,9 @@ def require_password() -> None:
 
 
 requested_view = str(st.query_params.get("view", "home")).lower()
+if requested_view == "tools":
+    render_public_tools()
+    st.stop()
 if requested_view != "workspace":
     render_public_home()
     st.stop()
@@ -1432,7 +1479,7 @@ def sign_out() -> None:
 
 st.sidebar.markdown(
     '<div class="rfs-brand"><span class="rfs-logo">R</span>'
-    "<span>Raman Financial Services</span></div>",
+    "<span>Raman Tax &amp; Accounting Inc</span></div>",
     unsafe_allow_html=True,
 )
 st.sidebar.markdown('<div class="rfs-nav-label">Accounting tools</div>', unsafe_allow_html=True)
@@ -1452,7 +1499,7 @@ st.sidebar.button("Sign out", on_click=sign_out, use_container_width=True)
 
 st.markdown(
     '<div class="rfs-topbar"><div class="rfs-topbrand">'
-    '<span class="rfs-logo">R</span><span>Raman Financial Services</span></div>'
+    '<span class="rfs-logo">R</span><span>Raman Tax &amp; Accounting Inc</span></div>'
     '<span class="rfs-status">Secure session</span></div>',
     unsafe_allow_html=True,
 )
@@ -2142,7 +2189,7 @@ if selected_page == "Financial statements":
 
         st.markdown("**Practitioner information**")
         firm_cols = st.columns(3)
-        fs_firm_name = firm_cols[0].text_input("Accounting firm", value="Raman Financial Services")
+        fs_firm_name = firm_cols[0].text_input("Accounting firm", value="Raman Tax & Accounting Inc")
         fs_firm_address = firm_cols[1].text_input("Practitioner address", value="Surrey, BC")
         fs_report_date = firm_cols[2].date_input("Report date", value=date.today())
 
